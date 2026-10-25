@@ -5,7 +5,8 @@ import RecurringView from "./RecurringView";
 import { visibleRecurringProfiles } from "@/lib/recurringDuplicateGuard";
 import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { getZoneSuggestionData } from "@/lib/zoneHistory";
-import { vancouverWeekRange } from "@/lib/vancouverDate";
+import { recurringSkipScope } from "@/lib/recurringHolds";
+import { vancouverTodayKey, vancouverWeekRange } from "@/lib/vancouverDate";
 
 export default async function RecurringPage({
   params,
@@ -19,6 +20,7 @@ export default async function RecurringPage({
   // The pharmacy's week (Sunday to Saturday, Vancouver time) for the "skipped
   // this week" badges and the calendar's opening week.
   const thisWeek = vancouverWeekRange();
+  const todayStart = new Date(`${vancouverTodayKey()}T00:00:00.000Z`);
   const [recurringOrders, zones, drivers] = await Promise.all([
     prisma.recurringOrder.findMany({
       where: { storeId: store.id, isActive: true },
@@ -74,7 +76,11 @@ export default async function RecurringPage({
     isOnHold: o.isOnHold,
     holdStart: o.holdStart?.toISOString() ?? null,
     holdEnd: o.holdEnd?.toISOString() ?? null,
-    isSkippedThisWeek: o.skips.length > 0,
+    // Skip This Week vs one-day holds from the calendar, this week.
+    isSkippedThisWeek: o.skips.some((skip) => recurringSkipScope(skip) === "WEEK"),
+    heldDaysThisWeek: o.skips.filter((skip) => recurringSkipScope(skip) === "DAY").length,
+    // A vacation hold set ahead of time: deliveries carry on until it starts.
+    holdUpcoming: o.isOnHold && !!o.holdStart && o.holdStart > todayStart,
     assignedDriverId: o.assignedDriverId,
     assignedDriverName: o.assignedDriver?.name ?? null,
   }));

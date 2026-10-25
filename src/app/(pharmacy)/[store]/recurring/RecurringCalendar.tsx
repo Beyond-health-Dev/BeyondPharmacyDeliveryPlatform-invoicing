@@ -36,7 +36,9 @@ interface CalendarInstance {
   assignedDriverName: string | null;
   assignedDriverId: string | null;
   isHeld: boolean;
-  holdType: "INSTANCE" | "TEMPLATE" | null;
+  // INSTANCE: a one-day hold; WEEK: Skip This Week from the profile list;
+  // TEMPLATE: the profile's vacation hold.
+  holdType: "INSTANCE" | "WEEK" | "TEMPLATE" | null;
   skipDate: string | null;
   holdReason: string | null;
   generatedOrderStatus: string | null;
@@ -226,6 +228,8 @@ export default function RecurringCalendar({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           skipDate: instance.isHeld && instance.skipDate ? instance.skipDate : instance.date,
+          // Resume Week undoes only the week skip, not a one-day hold under it.
+          ...(instance.holdType === "WEEK" ? { scope: "WEEK" } : {}),
           ...(holding ? { reason } : {}),
         }),
       }
@@ -235,13 +239,19 @@ export default function RecurringCalendar({
       const body = await res.json().catch(() => ({}));
       setError(body.error || "Failed to update calendar hold");
     } else {
-      setSelectedInstance({
-        ...instance,
-        isHeld: holding,
-        holdType: holding ? "INSTANCE" : null,
-        skipDate: holding ? instance.date : null,
-        holdReason: holding ? reason : null,
-      });
+      // Resuming a week changes every day of it (and may give back a one-day
+      // hold), so close the quick view and let the refreshed week show it.
+      setSelectedInstance(
+        instance.holdType === "WEEK"
+          ? null
+          : {
+              ...instance,
+              isHeld: holding,
+              holdType: holding ? "INSTANCE" : null,
+              skipDate: holding ? instance.date : null,
+              holdReason: holding ? reason : null,
+            }
+      );
       setHoldReasonDraft("");
       setLoading(true);
       setRefreshToken((value) => value + 1);
@@ -463,9 +473,11 @@ export default function RecurringCalendar({
                 value={
                   selectedInstance.holdType === "TEMPLATE"
                     ? "Vacation hold"
-                    : selectedInstance.isHeld
-                      ? "Hold active"
-                      : "Active"
+                    : selectedInstance.holdType === "WEEK"
+                      ? "Skipped this week"
+                      : selectedInstance.isHeld
+                        ? "Hold active"
+                        : "Active"
                 }
               />
               {selectedInstance.generatedOrderStatus && (
@@ -515,9 +527,11 @@ export default function RecurringCalendar({
                 >
                   {busyInstance === selectedInstance.id
                     ? "Updating..."
-                    : selectedInstance.isHeld
-                      ? "Resume"
-                      : "Hold"}
+                    : selectedInstance.holdType === "WEEK"
+                      ? "Resume Week"
+                      : selectedInstance.isHeld
+                        ? "Resume"
+                        : "Hold"}
                 </button>
               )}
               <button

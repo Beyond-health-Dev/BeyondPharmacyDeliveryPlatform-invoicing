@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
+import { WEEK_SKIP_REASON, undoDayHold, undoWeekSkip } from "@/lib/recurringHolds";
 import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 function parseDateInput(value: unknown) {
@@ -39,12 +40,41 @@ export async function POST(
     return NextResponse.json({ error: "skipDate must be a valid date" }, { status: 400 });
   }
 
-  await prisma.recurringOrderSkip.deleteMany({
+  if (requestedSkipDate && body.scope !== "WEEK") {
+    // The calendar's Resume on a one-day hold. A week skip sharing that
+    // Sunday stays (the calendar can be stale after the list's Skip This Week).
+    const dayRow = await prisma.recurringOrderSkip.findUnique({
+      where: { recurringOrderId_skipDate: { recurringOrderId: id, skipDate: requestedSkipDate } },
+    });
+    const undoDay = undoDayHold(dayRow);
+    if (dayRow && undoDay === "keepWeek") {
+      await prisma.recurringOrderSkip.updateMany({
+        where: { id: dayRow.id },
+        data: { scope: "WEEK", reason: WEEK_SKIP_REASON },
+      });
+    } else if (dayRow && undoDay === "delete") {
+      await prisma.recurringOrderSkip.deleteMany({ where: { id: dayRow.id } });
+    }
+    return NextResponse.json({ success: true });
+  }
+
+  // Undo Skip This Week: the list's Unskip (this week), or the calendar's
+  // Resume Week (the week skip's own date). Only the week skip goes; a
+  // one-day hold it took over on its Sunday comes back.
+  const row = await prisma.recurringOrderSkip.findUnique({
     where: {
-      recurringOrderId: id,
-      skipDate: requestedSkipDate ?? vancouverWeekRange().weekStart,
+      recurringOrderId_skipDate: {
+        recurringOrderId: id,
+        skipDate: requestedSkipDate ?? vancouverWeekRange().weekStart,
+      },
     },
   });
+  const undo = undoWeekSkip(row);
+  if (row && undo === "delete") {
+    await prisma.recurringOrderSkip.deleteMany({ where: { id: row.id } });
+  } else if (row && undo === "restoreDay") {
+    await prisma.recurringOrderSkip.updateMany({ where: { id: row.id }, data: { scope: "DAY" } });
+  }
 
   return NextResponse.json({ success: true });
 }

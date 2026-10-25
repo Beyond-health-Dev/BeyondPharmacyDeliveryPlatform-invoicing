@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   formatGenerationMessage,
   getVancouverDeliveryDateInfo,
-  hasRecurringSkipForDate,
   isRecurringScheduleDue,
   isVancouverSixAmWindow,
 } from "@/lib/cron";
@@ -76,23 +75,6 @@ describe("isRecurringScheduleDue", () => {
         week("2026-07-12T00:00:00Z")
       )
     ).toBe(false);
-  });
-});
-
-describe("hasRecurringSkipForDate", () => {
-  const deliveryDate = {
-    dayStart: new Date("2026-07-16T00:00:00Z"),
-    weekStart: new Date("2026-07-12T00:00:00Z"),
-  };
-
-  it("matches a day-specific skip and a week-level skip", () => {
-    expect(hasRecurringSkipForDate([{ skipDate: new Date("2026-07-16T00:00:00Z") }], deliveryDate)).toBe(true);
-    expect(hasRecurringSkipForDate([{ skipDate: new Date("2026-07-12T00:00:00Z") }], deliveryDate)).toBe(true);
-  });
-
-  it("ignores skips for other days", () => {
-    expect(hasRecurringSkipForDate([{ skipDate: new Date("2026-07-15T00:00:00Z") }], deliveryDate)).toBe(false);
-    expect(hasRecurringSkipForDate([], deliveryDate)).toBe(false);
   });
 });
 

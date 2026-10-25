@@ -5,6 +5,7 @@ import {
   recurringPeopleMatch,
   type RecurringPersonInput,
 } from "./recurringDuplicateGuard";
+import { hasRecurringSkipForDate, isVacationHoldActive } from "./recurringHolds";
 import { getSpokeProviderUserIds } from "./spoke";
 import {
   buildRecurringSpokeIdempotencyKey,
@@ -69,10 +70,6 @@ interface DriverCandidate {
 interface RecurrenceSchedule {
   recurrenceIntervalWeeks: number;
   recurrenceAnchorDate: Date;
-}
-
-interface RecurringSkipCandidate {
-  skipDate: Date;
 }
 
 export interface RecurringGenerationResult {
@@ -178,14 +175,6 @@ function utcWeekStart(date: Date) {
   return start;
 }
 
-function sameUtcDay(a: Date, b: Date) {
-  return (
-    a.getUTCFullYear() === b.getUTCFullYear() &&
-    a.getUTCMonth() === b.getUTCMonth() &&
-    a.getUTCDate() === b.getUTCDate()
-  );
-}
-
 export function isRecurringScheduleDue(
   recurring: RecurrenceSchedule,
   deliveryDate: Pick<DeliveryDateInfo, "weekStart">
@@ -199,17 +188,6 @@ export function isRecurringScheduleDue(
   );
 
   return weeksSinceAnchor >= 0 && weeksSinceAnchor % interval === 0;
-}
-
-export function hasRecurringSkipForDate(
-  skips: RecurringSkipCandidate[],
-  deliveryDate: Pick<DeliveryDateInfo, "dayStart" | "weekStart">
-) {
-  return skips.some(
-    (skip) =>
-      sameUtcDay(skip.skipDate, deliveryDate.dayStart) ||
-      sameUtcDay(skip.skipDate, deliveryDate.weekStart)
-  );
 }
 
 export interface RecurringGenerationOptions {
@@ -256,11 +234,11 @@ export async function generateRecurringOrders(
     }
   }
 
-  // Find active recurring orders that are not currently on hold
-  const recurringOrders = await prisma.recurringOrder.findMany({
+  // Active recurring orders whose vacation hold (if any) doesn't cover today.
+  // A hold set ahead of time must not stop the deliveries before it starts.
+  const activeRecurringOrders = await prisma.recurringOrder.findMany({
     where: {
       isActive: true,
-      isOnHold: false,
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     include: {
@@ -289,6 +267,10 @@ export async function generateRecurringOrders(
       },
     },
   });
+
+  const recurringOrders = activeRecurringOrders.filter(
+    (recurring) => !isVacationHoldActive(recurring, deliveryDate.dayStart)
+  );
 
   // Batch dedup: fetch all today's orders from recurring templates in one query
   const existingOrders = await prisma.order.findMany({
@@ -468,7 +450,7 @@ export async function generateRecurringOrders(
       seenDueByStore.set(recurring.storeId, [recurringPerson]);
     }
 
-    // Skip held instances. Older week-level skips are still honored.
+    // One-day holds from the calendar, and Skip This Week.
     if (hasRecurringSkipForDate(recurring.skips, deliveryDate)) {
       console.log(`[CRON] Skipping recurring order for ${recurring.patientName} (skip record exists)`);
       skipped++;

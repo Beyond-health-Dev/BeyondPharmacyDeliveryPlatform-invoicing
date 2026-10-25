@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
+import { WEEK_SKIP_REASON, dayHoldUpdate, weekSkipUpdate } from "@/lib/recurringHolds";
 import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 const TERMINAL_ORDER_STATUSES = ["DELIVERED", "FAILED", "CANCELLED"];
@@ -54,26 +55,29 @@ export async function POST(
   }
 
   // No date means "Skip This Week": a week-long skip keyed on Vancouver's
-  // Sunday, the same week the recurring cron checks.
+  // Sunday, the same week the recurring cron checks. A date is a one-day
+  // hold from the calendar.
+  const scope = requestedSkipDate ? "DAY" : "WEEK";
   const skipDate = requestedSkipDate ?? vancouverWeekRange().weekStart;
   const reason =
     typeof body.reason === "string" && body.reason.trim()
       ? body.reason.trim()
       : requestedSkipDate
         ? "Held from recurring calendar"
-        : "Patient picked up in-store";
+        : WEEK_SKIP_REASON;
+  const key = { recurringOrderId_skipDate: { recurringOrderId: id, skipDate } };
+  const current = await prisma.recurringOrderSkip.findUnique({ where: key });
 
   const skip = await prisma.recurringOrderSkip.upsert({
-    where: {
-      recurringOrderId_skipDate: {
-        recurringOrderId: id,
-        skipDate,
-      },
-    },
-    update: { reason },
+    where: key,
+    // A Sunday has one row. A week skip and a one-day hold landing on the
+    // same Sunday share it (WEEK_OVER_DAY), so undoing the week gives the
+    // one-day hold back, and a one-day hold never undoes a week skip.
+    update: scope === "WEEK" ? weekSkipUpdate(current, reason) : dayHoldUpdate(current, reason),
     create: {
       recurringOrderId: id,
       skipDate,
+      scope,
       reason,
       createdById: session.user.id,
     },
