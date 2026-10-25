@@ -24,9 +24,11 @@ describe("getVancouverDeliveryDateInfo", () => {
 });
 
 describe("vancouverWeekRange matches the week the cron generates for", () => {
-  it("agrees every half hour through 2026, DST changes included", () => {
+  // Hourly is enough: Vancouver is always a whole number of hours off UTC, so
+  // every Vancouver midnight falls on the hour.
+  it("agrees every hour through 2026, DST changes included", () => {
     const end = Date.parse("2027-01-01T00:00:00Z");
-    for (let t = Date.parse("2026-01-01T00:00:00Z"); t < end; t += 30 * 60 * 1000) {
+    for (let t = Date.parse("2026-01-01T00:00:00Z"); t < end; t += 60 * 60 * 1000) {
       const now = new Date(t);
       const cronWeek = getVancouverDeliveryDateInfo(now);
       const week = vancouverWeekRange(now);
@@ -37,7 +39,7 @@ describe("vancouverWeekRange matches the week the cron generates for", () => {
         throw new Error(`Weeks differ at ${now.toISOString()}`);
       }
     }
-  });
+  }, 30_000);
 });
 
 describe("isVancouverSixAmWindow", () => {

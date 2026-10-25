@@ -271,7 +271,7 @@ function cleanText(value: string | null | undefined) {
 
 /** "v3w3l5" -> "V3W 3L5"; anything that isn't a Canadian postal code is just tidied. */
 export function formatPostalCode(value: string | null | undefined) {
-  const compact = (value ?? "").toUpperCase().replace(/\s+/g, "");
+  const compact = toWinAnsi(value ?? "").toUpperCase().replace(/\s+/g, "");
   if (/^[A-Z]\d[A-Z]\d[A-Z]\d$/.test(compact)) return `${compact.slice(0, 3)} ${compact.slice(3)}`;
   return cleanText(value).toUpperCase();
 }

@@ -227,6 +227,9 @@ describe("label text", () => {
     expect(formatPostalCode("v3w3l5")).toBe("V3W 3L5");
     expect(formatPostalCode(" v3w 3l5 ")).toBe("V3W 3L5");
     expect(formatPostalCode("12345")).toBe("12345");
+    // Pasted with a zero-width space, or in full-width letters.
+    expect(formatPostalCode(`V3W${String.fromCharCode(0x200b)}3L5`)).toBe("V3W 3L5");
+    expect(formatPostalCode("\uff36\uff13\uff37\uff13\uff2c\uff15")).toBe("V3W 3L5");
     expect(
       formatLabelLines({
         patientName: "  Jordan\n Kaur ",
