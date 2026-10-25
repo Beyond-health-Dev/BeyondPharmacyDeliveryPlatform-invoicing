@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import RecurringCalendar from "./RecurringCalendar";
+import RecurringLabelSheets from "./RecurringLabelSheets";
 import RecurringOrderForm from "./RecurringOrderForm";
 import RecurringOrderList from "./RecurringOrderList";
 import PageHeader from "@/components/ui/PageHeader";
@@ -41,6 +42,9 @@ export default function RecurringView({
         </div>
         <div className="space-y-6 lg:col-span-2">
           <RecurringCalendar storeSlug={storeSlug} drivers={drivers} />
+          <div data-reveal="">
+            <RecurringLabelSheets storeSlug={storeSlug} orders={orders} />
+          </div>
           <div data-reveal="">
             <RecurringOrderList
               storeSlug={storeSlug}

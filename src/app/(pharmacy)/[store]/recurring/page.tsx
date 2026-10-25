@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import RecurringView from "./RecurringView";
-import { buildRecurringDuplicateCleanupPlan } from "@/lib/recurringDuplicateGuard";
+import { visibleRecurringProfiles } from "@/lib/recurringDuplicateGuard";
 import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { getZoneSuggestionData } from "@/lib/zoneHistory";
 
@@ -53,39 +53,27 @@ export default async function RecurringPage({
     ...d,
     isExternal: isSelectedSpokeProvider(d.id),
   }));
-  const duplicateCleanupPlan = buildRecurringDuplicateCleanupPlan(recurringOrders);
-  const hiddenRecurringIds = new Set(
-    duplicateCleanupPlan
-      .filter((change) => change.remainingDays.length === 0)
-      .map((change) => change.order.id)
-  );
-  const displayDaysByRecurringId = new Map(
-    duplicateCleanupPlan.map((change) => [change.order.id, change.remainingDays])
-  );
-
-  const orderItems = recurringOrders
-              .filter((o) => !hiddenRecurringIds.has(o.id))
-              .map((o) => ({
-                id: o.id,
-                patientName: o.patientName,
-                deliveryAddress: o.deliveryAddress,
-                deliveryCity: o.deliveryCity,
-                deliveryZoneId: o.deliveryZoneId,
-                zoneName: o.deliveryZone.name,
-                zonePrice: o.deliveryZone.price,
-                activeDays:
-                  displayDaysByRecurringId.get(o.id) ??
-                  (JSON.parse(o.activeDays) as number[]),
-                recurrenceIntervalWeeks: o.recurrenceIntervalWeeks,
-                recurrenceAnchorDate: o.recurrenceAnchorDate.toISOString(),
-                isActive: o.isActive,
-                isOnHold: o.isOnHold,
-                holdStart: o.holdStart?.toISOString() ?? null,
-                holdEnd: o.holdEnd?.toISOString() ?? null,
-                isSkippedThisWeek: o.skips.length > 0,
-                assignedDriverId: o.assignedDriverId,
-                assignedDriverName: o.assignedDriver?.name ?? null,
-              }));
+  // Same visibility rule the delivery label sheets use (fully duplicated
+  // profiles hidden, partly duplicated ones keep only their own days).
+  const orderItems = visibleRecurringProfiles(recurringOrders).map(({ order: o, activeDays }) => ({
+    id: o.id,
+    patientName: o.patientName,
+    deliveryAddress: o.deliveryAddress,
+    deliveryCity: o.deliveryCity,
+    deliveryZoneId: o.deliveryZoneId,
+    zoneName: o.deliveryZone.name,
+    zonePrice: o.deliveryZone.price,
+    activeDays,
+    recurrenceIntervalWeeks: o.recurrenceIntervalWeeks,
+    recurrenceAnchorDate: o.recurrenceAnchorDate.toISOString(),
+    isActive: o.isActive,
+    isOnHold: o.isOnHold,
+    holdStart: o.holdStart?.toISOString() ?? null,
+    holdEnd: o.holdEnd?.toISOString() ?? null,
+    isSkippedThisWeek: o.skips.length > 0,
+    assignedDriverId: o.assignedDriverId,
+    assignedDriverName: o.assignedDriver?.name ?? null,
+  }));
 
   return (
     <RecurringView

@@ -5,6 +5,7 @@ import {
   formatRecurringDuplicateMessage,
   parseRecurringActiveDays,
   recurringPeopleMatch,
+  visibleRecurringProfiles,
   type RecurringDuplicateRecord,
 } from "@/lib/recurringDuplicateGuard";
 
@@ -178,5 +179,54 @@ describe("buildRecurringDuplicateCleanupPlan after a merge", () => {
     expect(plan).toHaveLength(1);
     expect(plan[0].order.id).toBe("r2");
     expect(plan[0].remainingDays).toEqual([]);
+  });
+});
+
+describe("visibleRecurringProfiles (Recurring page and label sheets)", () => {
+  const record = (
+    id: string,
+    activeDays: string,
+    createdAt: string,
+    overrides: Partial<RecurringDuplicateRecord> = {}
+  ): RecurringDuplicateRecord => ({
+    ...person,
+    id,
+    storeId: "store_1",
+    activeDays,
+    createdAt: new Date(createdAt),
+    ...overrides,
+  });
+
+  it("hides a profile whose every day repeats an older one for the same person", () => {
+    const visible = visibleRecurringProfiles([
+      record("older", "[1,3]", "2026-01-01T00:00:00Z"),
+      record("copy", "[1,3]", "2026-02-01T00:00:00Z"),
+    ]);
+    expect(visible.map((v) => v.order.id)).toEqual(["older"]);
+  });
+
+  it("keeps only the newer profile's own days when it partly overlaps", () => {
+    const visible = visibleRecurringProfiles([
+      record("p2", "[3,5]", "2026-02-01T00:00:00Z"),
+      record("p1", "[1,3]", "2026-01-01T00:00:00Z"),
+    ]);
+    // Input order kept; p2 loses Wednesday to the older p1.
+    expect(visible).toEqual([
+      { order: expect.objectContaining({ id: "p2" }), activeDays: [5] },
+      { order: expect.objectContaining({ id: "p1" }), activeDays: [1, 3] },
+    ]);
+  });
+
+  it("leaves different people alone and gives unreadable days an empty list", () => {
+    const visible = visibleRecurringProfiles([
+      record("a", "[2]", "2026-01-01T00:00:00Z"),
+      record("b", "[2]", "2026-01-02T00:00:00Z", { patientName: "Someone Else", deliveryAddress: "9 Other Rd" }),
+      record("c", "not json", "2026-01-03T00:00:00Z", { patientName: "Third Person", deliveryAddress: "1 Third Ave" }),
+    ]);
+    expect(visible.map((v) => [v.order.id, v.activeDays])).toEqual([
+      ["a", [2]],
+      ["b", [2]],
+      ["c", []],
+    ]);
   });
 });

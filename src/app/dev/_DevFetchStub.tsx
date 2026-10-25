@@ -28,6 +28,9 @@ function answer(url: URL, method: string): Response {
   const path = rest.join("/");
 
   if (method !== "GET" && method !== "HEAD") return json({ ok: true });
+  if (path === "recurring/labels") {
+    return json({ error: "Label PDFs need the real server — the style guide has no database." }, 404);
+  }
   if (path === "notifications") return json(notifications);
   if (path === "reminders") {
     return url.searchParams.get("scope") === "due" &&

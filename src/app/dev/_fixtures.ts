@@ -127,6 +127,11 @@ export const recurringOrders: RecurringItem[] = [
   profile({ id: "r3", patientName: "Riley Chen", deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", deliveryZoneId: "z_langley", zoneName: "Langley", recurrenceIntervalWeeks: 2 }),
   profile({ id: "r4", patientName: "Morgan Patel", deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", deliveryZoneId: "z_whiterock", zoneName: "White Rock", isOnHold: true, holdStart: "2026-10-05T00:00:00.000Z", holdEnd: "2026-10-19T00:00:00.000Z" }),
   profile({ id: "r5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", deliveryZoneId: "z_coquitlam", zoneName: "Coquitlam", zonePrice: 5.25, assignedDriverId: null, assignedDriverName: null, isSkippedThisWeek: true }),
+  // Once-a-week profiles, for the per-weekday label sheets.
+  profile({ id: "r6", patientName: "Sam Gill", deliveryAddress: "7380 120 St", deliveryCity: "Delta", activeDays: [1] }),
+  profile({ id: "r7", patientName: "Taylor Dhillon", deliveryAddress: "10153 King George Blvd", activeDays: [2] }),
+  profile({ id: "r8", patientName: "Drew Sidhu", deliveryAddress: "9045 160 St", activeDays: [4], recurrenceIntervalWeeks: 2 }),
+  profile({ id: "r9", patientName: "Jamie Thompson", deliveryAddress: "5501 204 St", deliveryCity: "Langley", deliveryZoneId: "z_langley", zoneName: "Langley", activeDays: [5] }),
 ];
 
 export const reminderProfiles = recurringOrders.map((r) => ({
