@@ -2,16 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
+import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 const TERMINAL_ORDER_STATUSES = ["DELIVERED", "FAILED", "CANCELLED"];
-
-function currentWeekStart() {
-  const now = new Date();
-  const start = new Date(now);
-  start.setDate(now.getDate() - now.getDay());
-  start.setHours(0, 0, 0, 0);
-  return start;
-}
 
 function parseDateInput(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -60,7 +53,9 @@ export async function POST(
     return NextResponse.json({ error: "skipDate must be a valid date" }, { status: 400 });
   }
 
-  const skipDate = requestedSkipDate ?? currentWeekStart();
+  // No date means "Skip This Week": a week-long skip keyed on Vancouver's
+  // Sunday, the same week the recurring cron checks.
+  const skipDate = requestedSkipDate ?? vancouverWeekRange().weekStart;
   const reason =
     typeof body.reason === "string" && body.reason.trim()
       ? body.reason.trim()

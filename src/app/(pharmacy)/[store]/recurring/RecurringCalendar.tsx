@@ -13,6 +13,7 @@ import {
   sectionTitle,
 } from "@/lib/portalStyles";
 import { BANNER_CLASSES, TONE_CLASSES, statusTone } from "@/lib/statusTheme";
+import { vancouverWeekStartKey } from "@/lib/vancouverDate";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -55,6 +56,13 @@ function dateKey(date: Date) {
   return date.toISOString().split("T")[0];
 }
 
+function dateFromKey(key: string) {
+  return new Date(`${key}T00:00:00.000Z`);
+}
+
+// Days here are UTC midnights standing for calendar dates, so UTC getters give
+// the right weekday. Never pass `new Date()`: its UTC date is tomorrow from
+// ~5 PM Pacific, so take the current week from vancouverWeekStartKey().
 function weekStart(date: Date) {
   const start = new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
@@ -96,13 +104,17 @@ function formatDayLabel(date: Date) {
 export default function RecurringCalendar({
   storeSlug,
   drivers,
+  initialWeekStartKey,
 }: {
   storeSlug: string;
   drivers: Driver[];
+  // From the server, so the server render and the browser open on the same
+  // week even if the browser's clock is off.
+  initialWeekStartKey: string;
 }) {
   const router = useRouter();
   const confirm = useConfirm();
-  const [visibleWeek, setVisibleWeek] = useState(() => weekStart(new Date()));
+  const [visibleWeek, setVisibleWeek] = useState(() => dateFromKey(initialWeekStartKey));
   const [instances, setInstances] = useState<CalendarInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -287,7 +299,7 @@ export default function RecurringCalendar({
           </button>
           <button
             type="button"
-            onClick={() => showWeek(new Date())}
+            onClick={() => showWeek(dateFromKey(vancouverWeekStartKey()))}
             className={button("primary", "sm")}
           >
             This Week

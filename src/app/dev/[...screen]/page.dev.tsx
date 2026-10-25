@@ -14,7 +14,7 @@ import DeliveriesView from "@/app/(driver)/[store]/deliveries/DeliveriesView";
 import DeliveryDetailView from "@/app/(driver)/[store]/deliver/[id]/DeliveryDetailView";
 import EarningsView from "@/app/(driver)/[store]/earnings/EarningsView";
 import DevFrame from "../_DevFrame";
-import { deliveryDateDefault } from "@/lib/vancouverDate";
+import { deliveryDateDefault, vancouverWeekStartKey } from "@/lib/vancouverDate";
 import * as fx from "../_fixtures";
 
 function Pharmacy({ children }: { children: React.ReactNode }) {
@@ -91,6 +91,7 @@ function renderScreen(path: string) {
         <Pharmacy>
           <RecurringView
             storeSlug={slug}
+            weekStartKey={vancouverWeekStartKey()}
             zones={fx.activeZones}
             drivers={fx.drivers}
             zoneHistory={fx.zoneHistory}

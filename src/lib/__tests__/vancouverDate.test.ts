@@ -6,6 +6,8 @@ import {
   deliveryDayRange,
   describeDeliveryDay,
   vancouverTodayKey,
+  vancouverWeekRange,
+  vancouverWeekStartKey,
 } from "@/lib/vancouverDate";
 
 describe("vancouverTodayKey", () => {
@@ -129,5 +131,46 @@ describe("deliveryDayRange (driver delivery list)", () => {
     for (const bad of ["2026-02-30", "2026-13-01", "tomorrow", "2026-1-5", ""]) {
       expect(deliveryDayRange(bad, evening).selectedKey).toBe("2026-10-06");
     }
+  });
+});
+
+describe("vancouverWeekStartKey (recurring calendar and skips)", () => {
+  it("keeps Saturday evening in the current week (PDT)", () => {
+    // Sat Oct 24, 5:30 PM and 11 PM PDT. The UTC date is already Sunday the 25th.
+    expect(vancouverWeekStartKey(new Date("2026-10-25T00:30:00Z"))).toBe("2026-10-18");
+    expect(vancouverWeekStartKey(new Date("2026-10-25T06:00:00Z"))).toBe("2026-10-18");
+    // Sun Oct 25, 12:30 AM PDT starts the next week.
+    expect(vancouverWeekStartKey(new Date("2026-10-25T07:30:00Z"))).toBe("2026-10-25");
+  });
+
+  it("keeps Saturday evening in the current week (PST)", () => {
+    // Sat Nov 28, 4:30 PM and 11 PM PST; Sun Nov 29, 12:30 AM PST.
+    expect(vancouverWeekStartKey(new Date("2026-11-29T00:30:00Z"))).toBe("2026-11-22");
+    expect(vancouverWeekStartKey(new Date("2026-11-29T07:00:00Z"))).toBe("2026-11-22");
+    expect(vancouverWeekStartKey(new Date("2026-11-29T08:30:00Z"))).toBe("2026-11-29");
+  });
+
+  it("turns over at Vancouver midnight on the daylight-saving Sundays", () => {
+    // Clocks go back on Sun Nov 1: Sat 11:30 PM PDT, then 1:30 AM PDT and PST.
+    expect(vancouverWeekStartKey(new Date("2026-11-01T06:30:00Z"))).toBe("2026-10-25");
+    expect(vancouverWeekStartKey(new Date("2026-11-01T08:30:00Z"))).toBe("2026-11-01");
+    expect(vancouverWeekStartKey(new Date("2026-11-01T09:30:00Z"))).toBe("2026-11-01");
+    // Clocks go forward on Sun Mar 8: Sat 11:30 PM PST, then 3:30 AM PDT.
+    expect(vancouverWeekStartKey(new Date("2026-03-08T07:30:00Z"))).toBe("2026-03-01");
+    expect(vancouverWeekStartKey(new Date("2026-03-08T10:30:00Z"))).toBe("2026-03-08");
+  });
+
+  it("handles weekday evenings and a week spanning the new year", () => {
+    expect(vancouverWeekStartKey(new Date("2026-10-22T03:00:00Z"))).toBe("2026-10-18"); // Wed 8 PM PDT
+    expect(vancouverWeekStartKey(new Date("2027-01-03T07:00:00Z"))).toBe("2026-12-27"); // Sat Jan 2, 11 PM PST
+  });
+});
+
+describe("vancouverWeekRange", () => {
+  it("gives UTC-midnight bounds of the Vancouver week", () => {
+    const range = vancouverWeekRange(new Date("2026-10-25T02:00:00Z")); // Sat Oct 24, 7 PM PDT
+    expect(range.startKey).toBe("2026-10-18");
+    expect(range.weekStart.toISOString()).toBe("2026-10-18T00:00:00.000Z");
+    expect(range.weekEnd.toISOString()).toBe("2026-10-25T00:00:00.000Z");
   });
 });

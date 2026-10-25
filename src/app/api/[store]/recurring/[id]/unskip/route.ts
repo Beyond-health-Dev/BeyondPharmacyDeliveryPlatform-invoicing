@@ -2,14 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
-
-function currentWeekStart() {
-  const now = new Date();
-  const start = new Date(now);
-  start.setDate(now.getDate() - now.getDay());
-  start.setHours(0, 0, 0, 0);
-  return start;
-}
+import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 function parseDateInput(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -49,7 +42,7 @@ export async function POST(
   await prisma.recurringOrderSkip.deleteMany({
     where: {
       recurringOrderId: id,
-      skipDate: requestedSkipDate ?? currentWeekStart(),
+      skipDate: requestedSkipDate ?? vancouverWeekRange().weekStart,
     },
   });
 

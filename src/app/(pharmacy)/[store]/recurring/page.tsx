@@ -5,6 +5,7 @@ import RecurringView from "./RecurringView";
 import { visibleRecurringProfiles } from "@/lib/recurringDuplicateGuard";
 import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { getZoneSuggestionData } from "@/lib/zoneHistory";
+import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 export default async function RecurringPage({
   params,
@@ -15,6 +16,9 @@ export default async function RecurringPage({
   const store = await resolveStore(storeSlug);
   if (!store) notFound();
 
+  // The pharmacy's week (Sunday to Saturday, Vancouver time) for the "skipped
+  // this week" badges and the calendar's opening week.
+  const thisWeek = vancouverWeekRange();
   const [recurringOrders, zones, drivers] = await Promise.all([
     prisma.recurringOrder.findMany({
       where: { storeId: store.id, isActive: true },
@@ -24,8 +28,8 @@ export default async function RecurringPage({
         skips: {
           where: {
             skipDate: {
-              gte: getStartOfWeek(),
-              lt: getEndOfWeek(),
+              gte: thisWeek.weekStart,
+              lt: thisWeek.weekEnd,
             },
           },
         },
@@ -78,6 +82,7 @@ export default async function RecurringPage({
   return (
     <RecurringView
       storeSlug={storeSlug}
+      weekStartKey={thisWeek.startKey}
       zones={zoneOptions}
       drivers={driverOptions}
       zoneHistory={zoneHistory}
@@ -85,18 +90,4 @@ export default async function RecurringPage({
       orders={orderItems}
     />
   );
-}
-
-function getStartOfWeek() {
-  const d = new Date();
-  const day = d.getDay();
-  d.setDate(d.getDate() - day);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function getEndOfWeek() {
-  const d = getStartOfWeek();
-  d.setDate(d.getDate() + 7);
-  return d;
 }
