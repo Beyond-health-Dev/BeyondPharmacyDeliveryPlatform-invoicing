@@ -81,6 +81,15 @@ export function undoWeekSkip(row: RecurringSkipCandidate | null): "none" | "dele
   return row.scope === WEEK_OVER_DAY ? "restoreDay" : "delete";
 }
 
+/**
+ * What the calendar's Resume on a one-day hold does to the row on that date:
+ * on a Sunday shared with a week skip, only the one-day hold goes.
+ */
+export function undoDayHold(row: RecurringSkipCandidate | null): "none" | "delete" | "keepWeek" {
+  if (!row) return "none";
+  return row.scope === WEEK_OVER_DAY ? "keepWeek" : "delete";
+}
+
 export interface VacationHold {
   isOnHold: boolean;
   holdStart: Date | null;

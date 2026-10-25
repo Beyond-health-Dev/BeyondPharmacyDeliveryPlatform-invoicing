@@ -185,6 +185,23 @@ describe("one-day holds and Skip This Week stay separate", () => {
     expect(rowsNow()).toEqual([{ date: "2026-10-18", scope: "DAY", reason: "In hospital" }]);
   });
 
+  it("a one-day Resume on a Sunday shared with a week skip keeps the week skipped", async () => {
+    // Hold Sunday, Skip This Week from the list, then Resume the Sunday in a
+    // calendar that hasn't reloaded (and still shows a one-day hold).
+    await call("skip", { skipDate: "2026-10-18", reason: "In hospital" });
+    await call("skip");
+    await call("unskip", { skipDate: "2026-10-18" });
+    expect(rowsNow()).toEqual([{ date: "2026-10-18", scope: "WEEK", reason: WEEK_REASON }]);
+    expect(heldOn("2026-10-21")).toBe(true);
+    // The other way round: Skip This Week first, then Hold and Resume the Sunday.
+    db.rows.length = 0;
+    await call("skip");
+    await call("skip", { skipDate: "2026-10-18", reason: "In hospital" });
+    await call("unskip", { skipDate: "2026-10-18" });
+    expect(rowsNow()).toEqual([{ date: "2026-10-18", scope: "WEEK", reason: WEEK_REASON }]);
+    expect(heldOn("2026-10-21")).toBe(true);
+  });
+
   it("the calendar's Resume on a one-day hold removes it", async () => {
     await call("skip", { skipDate: "2026-10-22", reason: "In hospital" });
     await call("unskip", { skipDate: "2026-10-22" });

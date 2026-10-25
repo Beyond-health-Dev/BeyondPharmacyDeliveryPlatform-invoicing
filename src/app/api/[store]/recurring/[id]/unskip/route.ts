@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
-import { undoWeekSkip } from "@/lib/recurringHolds";
+import { WEEK_SKIP_REASON, undoDayHold, undoWeekSkip } from "@/lib/recurringHolds";
 import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 function parseDateInput(value: unknown) {
@@ -41,10 +41,20 @@ export async function POST(
   }
 
   if (requestedSkipDate && body.scope !== "WEEK") {
-    // The calendar's Resume on a one-day hold.
-    await prisma.recurringOrderSkip.deleteMany({
-      where: { recurringOrderId: id, skipDate: requestedSkipDate },
+    // The calendar's Resume on a one-day hold. A week skip sharing that
+    // Sunday stays (the calendar can be stale after the list's Skip This Week).
+    const dayRow = await prisma.recurringOrderSkip.findUnique({
+      where: { recurringOrderId_skipDate: { recurringOrderId: id, skipDate: requestedSkipDate } },
     });
+    const undoDay = undoDayHold(dayRow);
+    if (dayRow && undoDay === "keepWeek") {
+      await prisma.recurringOrderSkip.updateMany({
+        where: { id: dayRow.id },
+        data: { scope: "WEEK", reason: WEEK_SKIP_REASON },
+      });
+    } else if (dayRow && undoDay === "delete") {
+      await prisma.recurringOrderSkip.deleteMany({ where: { id: dayRow.id } });
+    }
     return NextResponse.json({ success: true });
   }
 

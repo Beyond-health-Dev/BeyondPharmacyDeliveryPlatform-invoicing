@@ -7,6 +7,7 @@ import {
   hasRecurringSkipForDate,
   isVacationHoldActive,
   recurringSkipScope,
+  undoDayHold,
   undoWeekSkip,
   weekSkipUpdate,
 } from "@/lib/recurringHolds";
@@ -97,6 +98,14 @@ describe("a one-day hold and a week skip sharing a Sunday", () => {
     expect(undoWeekSkip(oldWeekSkip)).toBe("delete");
     expect(undoWeekSkip(both)).toBe("restoreDay");
     expect(undoWeekSkip({ ...both, reason: WEEK_SKIP_REASON })).toBe("restoreDay");
+  });
+
+  it("resuming one day on a shared Sunday keeps the week skip", () => {
+    expect(undoDayHold(null)).toBe("none");
+    expect(undoDayHold(dayHold)).toBe("delete");
+    expect(undoDayHold(both)).toBe("keepWeek");
+    // Older calendars resume a week skip's Sunday this way too.
+    expect(undoDayHold(weekSkip)).toBe("delete");
   });
 });
 
