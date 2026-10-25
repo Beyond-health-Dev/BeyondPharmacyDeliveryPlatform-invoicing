@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   WEEK_SKIP_REASON,
+  dayHoldUpdate,
   findRecurringSkipForDate,
   hasRecurringSkipForDate,
   isVacationHoldActive,
   recurringSkipScope,
+  undoWeekSkip,
 } from "@/lib/recurringHolds";
 
 const date = (key: string) => new Date(`${key}T00:00:00.000Z`);
@@ -53,6 +55,26 @@ describe("hasRecurringSkipForDate", () => {
   it("returns the matching skip so callers can tell the kinds apart", () => {
     expect(findRecurringSkipForDate([sundayHold, wednesdayHold], day("2026-10-21"))).toBe(wednesdayHold);
     expect(findRecurringSkipForDate([weekSkip], day("2026-10-22"))).toBe(weekSkip);
+  });
+});
+
+describe("a one-day hold and a week skip sharing a Sunday", () => {
+  const sunday = date("2026-10-18");
+
+  it("a one-day hold never turns a week skip into a one-day hold", () => {
+    expect(dayHoldUpdate(null, "In hospital")).toEqual({ scope: "DAY", reason: "In hospital" });
+    expect(dayHoldUpdate({ skipDate: sunday, scope: "DAY", reason: "Away" }, "In hospital")).toEqual({ scope: "DAY", reason: "In hospital" });
+    expect(dayHoldUpdate({ skipDate: sunday, scope: "WEEK", reason: WEEK_SKIP_REASON }, "In hospital")).toEqual({ scope: "WEEK", reason: "In hospital" });
+    // A week skip saved by older code, without a scope.
+    expect(dayHoldUpdate({ skipDate: sunday, scope: null, reason: WEEK_SKIP_REASON }, "In hospital")).toEqual({ scope: "WEEK", reason: "In hospital" });
+  });
+
+  it("undoing the week deletes a plain week skip and gives back a one-day hold under it", () => {
+    expect(undoWeekSkip(null)).toBe("none");
+    expect(undoWeekSkip({ skipDate: sunday, scope: "DAY", reason: "In hospital" })).toBe("none");
+    expect(undoWeekSkip({ skipDate: sunday, scope: "WEEK", reason: WEEK_SKIP_REASON })).toBe("delete");
+    expect(undoWeekSkip({ skipDate: sunday, scope: null, reason: WEEK_SKIP_REASON })).toBe("delete");
+    expect(undoWeekSkip({ skipDate: sunday, scope: "WEEK", reason: "In hospital" })).toBe("restoreDay");
   });
 });
 
