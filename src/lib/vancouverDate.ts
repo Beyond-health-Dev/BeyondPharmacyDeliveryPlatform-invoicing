@@ -39,6 +39,39 @@ export function addDaysToDateKey(dateKey: string, days: number) {
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
+/**
+ * The Sunday (YYYY-MM-DD) that starts the Vancouver week containing `now`.
+ * Weeks run Sunday to Saturday, like the recurring calendar and the skips.
+ * The UTC week turns over at ~5 PM Pacific on Saturday, a whole evening early.
+ */
+export function vancouverWeekStartKey(now: Date = new Date()) {
+  const today = vancouverTodayKey(now);
+  const weekday = new Date(`${today}T00:00:00.000Z`).getUTCDay();
+  return addDaysToDateKey(today, -weekday);
+}
+
+/**
+ * UTC-midnight bounds of the Vancouver week containing `now`, which is how
+ * skipDate and scheduledDate are stored. Same week as the recurring cron's.
+ */
+export function vancouverWeekRange(now: Date = new Date()) {
+  const startKey = vancouverWeekStartKey(now);
+  return {
+    startKey,
+    weekStart: new Date(`${startKey}T00:00:00.000Z`),
+    weekEnd: new Date(`${addDaysToDateKey(startKey, 7)}T00:00:00.000Z`),
+  };
+}
+
+/**
+ * "INV-2026-10": invoices are numbered by Vancouver's month. The server's UTC
+ * clock is already in next month on a month's last evening.
+ */
+export function invoiceNumberPrefix(now: Date = new Date()) {
+  const [year, month] = vancouverTodayKey(now).split("-");
+  return `INV-${year}-${month}`;
+}
+
 // From 12:00 PM Vancouver time, new orders default to the next day's delivery.
 export const NEXT_DAY_CUTOFF_HOUR = 12;
 

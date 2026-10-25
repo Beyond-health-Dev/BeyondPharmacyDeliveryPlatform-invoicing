@@ -106,7 +106,7 @@ export default function EarningsView({
                 </p>
                 <p className="text-xs text-muted">
                   {d.deliveryZoneName} &middot;{" "}
-                  {new Date(d.scheduledDate).toLocaleDateString()}
+                  {new Date(d.scheduledDate).toLocaleDateString("en-US", { timeZone: "UTC" })}
                 </p>
               </div>
               <p className={cn(totalPill.regular, "text-sm")}>

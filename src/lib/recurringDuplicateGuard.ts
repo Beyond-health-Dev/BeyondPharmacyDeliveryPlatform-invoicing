@@ -351,3 +351,29 @@ export function buildRecurringDuplicateCleanupPlan(
     remainingDays: [...change.remainingDays].sort((a, b) => a - b),
   }));
 }
+
+/**
+ * The recurring profiles a store actually runs, as the Recurring page shows
+ * them: a profile whose every day duplicates an older profile for the same
+ * person is hidden, and a partly duplicated one keeps only its own days.
+ * Input order is kept. The page and the delivery label sheets both use this,
+ * so the label counts on the page always match the printed sheets.
+ */
+export function visibleRecurringProfiles<T extends RecurringDuplicateRecord>(
+  recurringOrders: readonly T[]
+): Array<{ order: T; activeDays: number[] }> {
+  const remainingDaysById = new Map(
+    buildRecurringDuplicateCleanupPlan([...recurringOrders]).map((change) => [
+      change.order.id,
+      change.remainingDays,
+    ])
+  );
+
+  return recurringOrders.flatMap((order) => {
+    const remainingDays = remainingDaysById.get(order.id);
+    if (remainingDays) {
+      return remainingDays.length > 0 ? [{ order, activeDays: remainingDays }] : [];
+    }
+    return [{ order, activeDays: parseRecurringActiveDays(order.activeDays) ?? [] }];
+  });
+}

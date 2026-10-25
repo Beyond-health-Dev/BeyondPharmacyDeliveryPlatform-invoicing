@@ -2,9 +2,10 @@ import { prisma } from "@/lib/db";
 import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import RecurringView from "./RecurringView";
-import { buildRecurringDuplicateCleanupPlan } from "@/lib/recurringDuplicateGuard";
+import { visibleRecurringProfiles } from "@/lib/recurringDuplicateGuard";
 import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { getZoneSuggestionData } from "@/lib/zoneHistory";
+import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 export default async function RecurringPage({
   params,
@@ -15,6 +16,9 @@ export default async function RecurringPage({
   const store = await resolveStore(storeSlug);
   if (!store) notFound();
 
+  // The pharmacy's week (Sunday to Saturday, Vancouver time) for the "skipped
+  // this week" badges and the calendar's opening week.
+  const thisWeek = vancouverWeekRange();
   const [recurringOrders, zones, drivers] = await Promise.all([
     prisma.recurringOrder.findMany({
       where: { storeId: store.id, isActive: true },
@@ -24,8 +28,8 @@ export default async function RecurringPage({
         skips: {
           where: {
             skipDate: {
-              gte: getStartOfWeek(),
-              lt: getEndOfWeek(),
+              gte: thisWeek.weekStart,
+              lt: thisWeek.weekEnd,
             },
           },
         },
@@ -53,43 +57,32 @@ export default async function RecurringPage({
     ...d,
     isExternal: isSelectedSpokeProvider(d.id),
   }));
-  const duplicateCleanupPlan = buildRecurringDuplicateCleanupPlan(recurringOrders);
-  const hiddenRecurringIds = new Set(
-    duplicateCleanupPlan
-      .filter((change) => change.remainingDays.length === 0)
-      .map((change) => change.order.id)
-  );
-  const displayDaysByRecurringId = new Map(
-    duplicateCleanupPlan.map((change) => [change.order.id, change.remainingDays])
-  );
-
-  const orderItems = recurringOrders
-              .filter((o) => !hiddenRecurringIds.has(o.id))
-              .map((o) => ({
-                id: o.id,
-                patientName: o.patientName,
-                deliveryAddress: o.deliveryAddress,
-                deliveryCity: o.deliveryCity,
-                deliveryZoneId: o.deliveryZoneId,
-                zoneName: o.deliveryZone.name,
-                zonePrice: o.deliveryZone.price,
-                activeDays:
-                  displayDaysByRecurringId.get(o.id) ??
-                  (JSON.parse(o.activeDays) as number[]),
-                recurrenceIntervalWeeks: o.recurrenceIntervalWeeks,
-                recurrenceAnchorDate: o.recurrenceAnchorDate.toISOString(),
-                isActive: o.isActive,
-                isOnHold: o.isOnHold,
-                holdStart: o.holdStart?.toISOString() ?? null,
-                holdEnd: o.holdEnd?.toISOString() ?? null,
-                isSkippedThisWeek: o.skips.length > 0,
-                assignedDriverId: o.assignedDriverId,
-                assignedDriverName: o.assignedDriver?.name ?? null,
-              }));
+  // Same visibility rule the delivery label sheets use (fully duplicated
+  // profiles hidden, partly duplicated ones keep only their own days).
+  const orderItems = visibleRecurringProfiles(recurringOrders).map(({ order: o, activeDays }) => ({
+    id: o.id,
+    patientName: o.patientName,
+    deliveryAddress: o.deliveryAddress,
+    deliveryCity: o.deliveryCity,
+    deliveryZoneId: o.deliveryZoneId,
+    zoneName: o.deliveryZone.name,
+    zonePrice: o.deliveryZone.price,
+    activeDays,
+    recurrenceIntervalWeeks: o.recurrenceIntervalWeeks,
+    recurrenceAnchorDate: o.recurrenceAnchorDate.toISOString(),
+    isActive: o.isActive,
+    isOnHold: o.isOnHold,
+    holdStart: o.holdStart?.toISOString() ?? null,
+    holdEnd: o.holdEnd?.toISOString() ?? null,
+    isSkippedThisWeek: o.skips.length > 0,
+    assignedDriverId: o.assignedDriverId,
+    assignedDriverName: o.assignedDriver?.name ?? null,
+  }));
 
   return (
     <RecurringView
       storeSlug={storeSlug}
+      weekStartKey={thisWeek.startKey}
       zones={zoneOptions}
       drivers={driverOptions}
       zoneHistory={zoneHistory}
@@ -97,18 +90,4 @@ export default async function RecurringPage({
       orders={orderItems}
     />
   );
-}
-
-function getStartOfWeek() {
-  const d = new Date();
-  const day = d.getDay();
-  d.setDate(d.getDate() - day);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function getEndOfWeek() {
-  const d = getStartOfWeek();
-  d.setDate(d.getDate() + 7);
-  return d;
 }

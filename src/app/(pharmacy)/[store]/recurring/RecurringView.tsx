@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import RecurringCalendar from "./RecurringCalendar";
+import RecurringLabelSheets from "./RecurringLabelSheets";
 import RecurringOrderForm from "./RecurringOrderForm";
 import RecurringOrderList from "./RecurringOrderList";
 import PageHeader from "@/components/ui/PageHeader";
@@ -9,6 +10,7 @@ import { pageTitle } from "@/lib/portalStyles";
 // dev-only style guide can render it from fixtures.
 export default function RecurringView({
   storeSlug,
+  weekStartKey,
   zones,
   drivers,
   zoneHistory,
@@ -16,6 +18,8 @@ export default function RecurringView({
   orders,
 }: {
   storeSlug: string;
+  // This week's Sunday in Vancouver (YYYY-MM-DD), worked out on the server.
+  weekStartKey: string;
   zones: ComponentProps<typeof RecurringOrderList>["zones"];
   drivers: ComponentProps<typeof RecurringOrderList>["drivers"];
   zoneHistory: ComponentProps<typeof RecurringOrderList>["zoneHistory"];
@@ -40,7 +44,10 @@ export default function RecurringView({
           />
         </div>
         <div className="space-y-6 lg:col-span-2">
-          <RecurringCalendar storeSlug={storeSlug} drivers={drivers} />
+          <RecurringCalendar storeSlug={storeSlug} drivers={drivers} initialWeekStartKey={weekStartKey} />
+          <div data-reveal="">
+            <RecurringLabelSheets storeSlug={storeSlug} orders={orders} />
+          </div>
           <div data-reveal="">
             <RecurringOrderList
               storeSlug={storeSlug}

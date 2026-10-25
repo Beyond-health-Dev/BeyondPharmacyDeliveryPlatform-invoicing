@@ -26,6 +26,7 @@ export default async function DeliveriesPage({
   // at ~5 PM Pacific, showing next-day orders as today's.)
   const {
     selectedKey: currentDateStr,
+    todayKey,
     isToday,
     todayStart: today,
     dayStart: selectedDate,
@@ -72,6 +73,7 @@ export default async function DeliveriesPage({
     <DeliveriesView
       storeSlug={store.slug}
       currentDateStr={currentDateStr}
+      todayKey={todayKey}
       isToday={isToday}
       selectedDateLabel={selectedDate.toLocaleDateString("en-US", {
         timeZone: "UTC",

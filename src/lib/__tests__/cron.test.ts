@@ -6,6 +6,7 @@ import {
   isRecurringScheduleDue,
   isVancouverSixAmWindow,
 } from "@/lib/cron";
+import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 describe("getVancouverDeliveryDateInfo", () => {
   it("keeps Vancouver's date across the UTC midnight boundary", () => {
@@ -20,6 +21,25 @@ describe("getVancouverDeliveryDateInfo", () => {
     expect(info.dayStart.toISOString()).toBe("2026-07-15T00:00:00.000Z");
     expect(info.nextDayStart.toISOString()).toBe("2026-07-16T00:00:00.000Z");
   });
+});
+
+describe("vancouverWeekRange matches the week the cron generates for", () => {
+  // Hourly is enough: Vancouver is always a whole number of hours off UTC, so
+  // every Vancouver midnight falls on the hour.
+  it("agrees every hour through 2026, DST changes included", () => {
+    const end = Date.parse("2027-01-01T00:00:00Z");
+    for (let t = Date.parse("2026-01-01T00:00:00Z"); t < end; t += 60 * 60 * 1000) {
+      const now = new Date(t);
+      const cronWeek = getVancouverDeliveryDateInfo(now);
+      const week = vancouverWeekRange(now);
+      if (
+        week.weekStart.getTime() !== cronWeek.weekStart.getTime() ||
+        week.weekEnd.getTime() !== cronWeek.weekEnd.getTime()
+      ) {
+        throw new Error(`Weeks differ at ${now.toISOString()}`);
+      }
+    }
+  }, 30_000);
 });
 
 describe("isVancouverSixAmWindow", () => {
