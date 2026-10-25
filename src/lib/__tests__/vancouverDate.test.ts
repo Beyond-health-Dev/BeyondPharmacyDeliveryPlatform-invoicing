@@ -5,6 +5,7 @@ import {
   deliveryDateDefault,
   deliveryDayRange,
   describeDeliveryDay,
+  invoiceNumberPrefix,
   vancouverTodayKey,
   vancouverWeekRange,
   vancouverWeekStartKey,
@@ -172,5 +173,13 @@ describe("vancouverWeekRange", () => {
     expect(range.startKey).toBe("2026-10-18");
     expect(range.weekStart.toISOString()).toBe("2026-10-18T00:00:00.000Z");
     expect(range.weekEnd.toISOString()).toBe("2026-10-25T00:00:00.000Z");
+  });
+});
+
+describe("invoiceNumberPrefix", () => {
+  it("numbers by Vancouver's month on a month's last evening", () => {
+    expect(invoiceNumberPrefix(new Date("2026-11-01T01:00:00Z"))).toBe("INV-2026-10"); // Oct 31, 6 PM PDT
+    expect(invoiceNumberPrefix(new Date("2027-01-01T02:00:00Z"))).toBe("INV-2026-12"); // Dec 31, 6 PM PST
+    expect(invoiceNumberPrefix(new Date("2026-11-01T08:00:00Z"))).toBe("INV-2026-11"); // Nov 1, 1 AM PDT
   });
 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
+import { invoiceNumberPrefix } from "@/lib/vancouverDate";
 
 export async function POST(
   req: NextRequest,
@@ -86,15 +87,14 @@ export async function POST(
       const totalAmount = orders.reduce((sum, o) => sum + o.priceAtCreation, 0);
 
       // Generate invoice number
-      const year = new Date().getFullYear();
-      const month = String(new Date().getMonth() + 1).padStart(2, "0");
+      const prefix = invoiceNumberPrefix();
       const count = await tx.invoice.count({
         where: {
-          invoiceNumber: { startsWith: `INV-${year}-${month}` },
+          invoiceNumber: { startsWith: prefix },
           storeId: store.id,
         },
       });
-      const invoiceNumber = `INV-${year}-${month}-${String(count + 1).padStart(3, "0")}`;
+      const invoiceNumber = `${prefix}-${String(count + 1).padStart(3, "0")}`;
 
       return tx.invoice.create({
         data: {

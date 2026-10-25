@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import EarningsView from "./EarningsView";
+import { earningsPeriod } from "./earningsPeriod";
 
 export default async function EarningsPage({
   params,
@@ -21,15 +22,7 @@ export default async function EarningsPage({
   const sp = await searchParams;
   const range = sp.range === "month" ? "month" : "week";
 
-  // Calculate date range
-  const now = new Date();
-  const rangeStart = new Date(now);
-  if (range === "week") {
-    rangeStart.setDate(now.getDate() - now.getDay()); // Start of week (Sunday)
-  } else {
-    rangeStart.setDate(1); // Start of month
-  }
-  rangeStart.setHours(0, 0, 0, 0);
+  const { start: rangeStart, startKey: startStr, endKey: endStr } = earningsPeriod(range);
 
   const earningsWhere = {
     assignedDriverId: session.user.id,
@@ -61,9 +54,6 @@ export default async function EarningsPage({
 
   const totalEarnings = stats._sum.priceAtCreation ?? 0;
   const totalCount = stats._count;
-
-  const startStr = rangeStart.toISOString().split("T")[0];
-  const endStr = now.toISOString().split("T")[0];
 
   return (
     <EarningsView

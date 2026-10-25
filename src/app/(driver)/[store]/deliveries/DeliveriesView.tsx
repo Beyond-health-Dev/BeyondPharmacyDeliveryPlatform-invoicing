@@ -10,6 +10,7 @@ import { pageTitle } from "@/lib/portalStyles";
 export default function DeliveriesView({
   storeSlug,
   currentDateStr,
+  todayKey,
   isToday,
   selectedDateLabel,
   pendingCount,
@@ -21,6 +22,7 @@ export default function DeliveriesView({
 }: {
   storeSlug: string;
   currentDateStr: string;
+  todayKey: string;
   isToday: boolean;
   selectedDateLabel: string;
   pendingCount: number;
@@ -33,7 +35,13 @@ export default function DeliveriesView({
   return (
     <div>
       {poll && <DeliveryPoller />}
-      <DateNavigation storeSlug={storeSlug} currentDate={currentDateStr} />
+      <DateNavigation
+        storeSlug={storeSlug}
+        currentDate={currentDateStr}
+        todayKey={todayKey}
+        isToday={isToday}
+        dateLabel={selectedDateLabel}
+      />
       <PageHeader className="mb-4">
         <h1 className={`${pageTitle} mb-4`}>
           {isToday

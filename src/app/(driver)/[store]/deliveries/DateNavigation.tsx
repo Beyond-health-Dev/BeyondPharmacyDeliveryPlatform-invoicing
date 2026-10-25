@@ -1,57 +1,27 @@
 "use client";
 
 import { useRouter, usePathname } from "next/navigation";
-import { useMemo } from "react";
 import { cn, primaryButton, secondaryButton } from "@/lib/portalStyles";
+import { dateNavigation } from "./dateNavigation";
 
-function formatDateParam(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
+// Today and the day's label come from the server (Vancouver's day). Reading
+// the browser clock here made the server render and the browser disagree
+// every evening, when UTC is already tomorrow.
 export default function DateNavigation({
   currentDate,
+  todayKey,
+  isToday,
+  dateLabel,
 }: {
   storeSlug: string;
   currentDate: string;
+  todayKey: string;
+  isToday: boolean;
+  dateLabel: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-
-  const { prevDate, nextDate, isToday, isPrevDisabled, isNextDisabled, displayDate } =
-    useMemo(() => {
-      const selected = new Date(currentDate + "T00:00:00");
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const prev = new Date(selected);
-      prev.setDate(prev.getDate() - 1);
-
-      const next = new Date(selected);
-      next.setDate(next.getDate() + 1);
-
-      const minDate = new Date(today);
-      minDate.setDate(minDate.getDate() - 30);
-
-      const maxDate = new Date(today);
-      maxDate.setDate(maxDate.getDate() + 7);
-
-      return {
-        prevDate: formatDateParam(prev),
-        nextDate: formatDateParam(next),
-        isToday: selected.getTime() === today.getTime(),
-        isPrevDisabled: prev < minDate,
-        isNextDisabled: next > maxDate,
-        displayDate: selected.toLocaleDateString("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }),
-      };
-    }, [currentDate]);
+  const { prevDate, nextDate, isPrevDisabled, isNextDisabled } = dateNavigation(currentDate, todayKey);
 
   const navigate = (date: string | null) => {
     if (date) {
@@ -93,7 +63,7 @@ export default function DateNavigation({
       </div>
 
       {!isToday && (
-        <p className="text-center text-sm text-muted mt-2">{displayDate}</p>
+        <p className="text-center text-sm text-muted mt-2">{dateLabel}</p>
       )}
     </div>
   );

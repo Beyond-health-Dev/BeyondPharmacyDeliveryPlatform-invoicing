@@ -130,6 +130,7 @@ function renderScreen(path: string) {
           <DeliveriesView
             storeSlug={slug}
             currentDateStr={fx.TODAY}
+            todayKey={fx.TODAY}
             isToday
             selectedDateLabel={new Date(`${fx.TODAY}T12:00:00.000Z`).toLocaleDateString("en-US", {
               weekday: "short",

@@ -63,6 +63,15 @@ export function vancouverWeekRange(now: Date = new Date()) {
   };
 }
 
+/**
+ * "INV-2026-10": invoices are numbered by Vancouver's month. The server's UTC
+ * clock is already in next month on a month's last evening.
+ */
+export function invoiceNumberPrefix(now: Date = new Date()) {
+  const [year, month] = vancouverTodayKey(now).split("-");
+  return `INV-${year}-${month}`;
+}
+
 // From 12:00 PM Vancouver time, new orders default to the next day's delivery.
 export const NEXT_DAY_CUTOFF_HOUR = 12;
 

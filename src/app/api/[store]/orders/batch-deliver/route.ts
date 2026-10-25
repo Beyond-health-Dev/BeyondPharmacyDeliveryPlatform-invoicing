@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
+import { deliveryDayRange } from "@/lib/vancouverDate";
 
 export async function POST(
   _req: NextRequest,
@@ -26,17 +27,17 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  // Vancouver's today, the same day the driver's deliveries page shows.
+  // (Server-local midnight is UTC on Vercel, which turns over at ~5 PM
+  // Pacific and would mark tomorrow's orders delivered.)
+  const { todayStart, nextDayStart } = deliveryDayRange(undefined);
 
   const result = await prisma.$transaction(async (tx) => {
     const eligible = await tx.order.findMany({
       where: {
         assignedDriverId: session.user.id,
         storeId: store.id,
-        scheduledDate: { gte: today, lt: tomorrow },
+        scheduledDate: { gte: todayStart, lt: nextDayStart },
         status: { in: ["ASSIGNED", "PICKED_UP", "IN_TRANSIT"] },
       },
       select: { id: true, patientName: true },

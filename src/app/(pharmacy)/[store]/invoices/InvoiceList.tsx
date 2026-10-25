@@ -25,6 +25,12 @@ interface InvoiceItem {
   driverName: string | null;
 }
 
+// Period dates are stored as UTC midnights; read in the browser's own time
+// zone (Pacific) they showed a day early.
+function formatPeriodDate(value: string) {
+  return new Date(value).toLocaleDateString("en-US", { timeZone: "UTC" });
+}
+
 export default function InvoiceList({
   invoices,
   storeSlug,
@@ -76,7 +82,7 @@ export default function InvoiceList({
                   {inv.driverName ?? <span className="text-muted">All drivers</span>}
                 </td>
                 <td className="px-6 py-4 text-sm text-ink tabular-nums">
-                  {new Date(inv.periodStart).toLocaleDateString()} – {new Date(inv.periodEnd).toLocaleDateString()}
+                  {formatPeriodDate(inv.periodStart)} – {formatPeriodDate(inv.periodEnd)}
                 </td>
                 <td className="px-6 py-4 text-sm text-ink tabular-nums">{inv.lineItemCount}</td>
                 <td className="px-6 py-4 text-sm">

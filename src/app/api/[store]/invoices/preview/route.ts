@@ -76,7 +76,7 @@ export async function GET(
       address: `${o.deliveryAddress}, ${o.deliveryCity}`,
       zone: o.deliveryZoneName,
       price: o.priceAtCreation,
-      date: new Date(o.scheduledDate).toLocaleDateString(),
+      date: new Date(o.scheduledDate).toLocaleDateString("en-US", { timeZone: "UTC" }),
       status: o.status,
     })),
     total,

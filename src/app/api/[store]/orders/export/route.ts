@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
+import { vancouverTodayKey } from "@/lib/vancouverDate";
 
 export async function GET(
   _req: NextRequest,
@@ -49,7 +50,7 @@ export async function GET(
   });
 
   const csv = [header, ...rows].join("\n");
-  const today = new Date().toISOString().split("T")[0];
+  const today = vancouverTodayKey();
 
   return new NextResponse(csv, {
     headers: {
