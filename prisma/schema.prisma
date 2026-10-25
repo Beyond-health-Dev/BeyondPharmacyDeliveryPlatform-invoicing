@@ -146,6 +146,10 @@ model RecurringOrderSkip {
   recurringOrderId String
   recurringOrder   RecurringOrder @relation(fields: [recurringOrderId], references: [id])
   skipDate         DateTime
+  // "DAY": a one-day hold from the calendar. "WEEK": Skip This Week, holding
+  // the week that starts on skipDate (a Sunday). Null on rows saved by older
+  // code; see recurringSkipScope in src/lib/recurringHolds.ts.
+  scope            String?
   reason           String?
   createdById      String
   createdBy        User           @relation(fields: [createdById], references: [id])

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveStore } from "@/lib/store";
+import { WEEK_SKIP_REASON } from "@/lib/recurringHolds";
 import { vancouverWeekRange } from "@/lib/vancouverDate";
 
 function parseDateInput(value: unknown) {
@@ -40,10 +41,17 @@ export async function POST(
   }
 
   await prisma.recurringOrderSkip.deleteMany({
-    where: {
-      recurringOrderId: id,
-      skipDate: requestedSkipDate ?? vancouverWeekRange().weekStart,
-    },
+    where: requestedSkipDate
+      ? // The calendar's Resume: whatever holds that date.
+        { recurringOrderId: id, skipDate: requestedSkipDate }
+      : // The list's Unskip: this week's Skip This Week only, never a
+        // one-day hold on its Sunday. (Rows saved before the scope was
+        // recorded are week skips when they carry the week-skip reason.)
+        {
+          recurringOrderId: id,
+          skipDate: vancouverWeekRange().weekStart,
+          OR: [{ scope: "WEEK" }, { scope: null, reason: WEEK_SKIP_REASON }],
+        },
   });
 
   return NextResponse.json({ success: true });

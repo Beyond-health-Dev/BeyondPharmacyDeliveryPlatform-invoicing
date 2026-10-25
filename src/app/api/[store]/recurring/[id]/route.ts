@@ -113,9 +113,10 @@ export async function PATCH(
           { status: 400 }
         );
       }
-      if (end <= start) {
+      // Both days are included, so a one-day hold starts and ends on the same day.
+      if (end < start) {
         return NextResponse.json(
-          { error: "holdEnd must be after holdStart" },
+          { error: "holdEnd can't be before holdStart" },
           { status: 400 }
         );
       }

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { hasRecurringSkipForDate, isRecurringScheduleDue } from "@/lib/cron";
+import { isRecurringScheduleDue } from "@/lib/cron";
+import {
+  findRecurringSkipForDate,
+  isVacationHoldActive,
+  recurringSkipScope,
+} from "@/lib/recurringHolds";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -59,20 +64,6 @@ function sameUtcDay(a: Date, b: Date) {
     a.getUTCMonth() === b.getUTCMonth() &&
     a.getUTCDate() === b.getUTCDate()
   );
-}
-
-function isTemplateHoldActive(
-  recurring: {
-    isOnHold: boolean;
-    holdStart: Date | null;
-    holdEnd: Date | null;
-  },
-  dayStart: Date
-) {
-  if (!recurring.isOnHold) return false;
-  if (!recurring.holdStart || !recurring.holdEnd) return true;
-
-  return dayStart >= recurring.holdStart && dayStart <= recurring.holdEnd;
 }
 
 export async function GET(
@@ -143,10 +134,8 @@ export async function GET(
       const weekStart = utcWeekStart(day);
       if (!isRecurringScheduleDue(recurring, { weekStart })) continue;
 
-      const skip = recurring.skips.find((candidate) =>
-        hasRecurringSkipForDate([candidate], { dayStart: day, weekStart })
-      );
-      const templateHold = isTemplateHoldActive(recurring, day);
+      const skip = findRecurringSkipForDate(recurring.skips, { dayStart: day, weekStart });
+      const templateHold = isVacationHoldActive(recurring, day);
       const order = recurring.orders.find((candidate) =>
         sameUtcDay(candidate.scheduledDate, day)
       );
@@ -183,7 +172,15 @@ export async function GET(
         assignedDriverId: recurring.assignedDriverId,
         recurrenceIntervalWeeks: recurring.recurrenceIntervalWeeks,
         isHeld: !!skip || templateHold,
-        holdType: skip ? "INSTANCE" : templateHold ? "TEMPLATE" : null,
+        // WEEK: Skip This Week from the profile list; INSTANCE: a one-day
+        // hold; TEMPLATE: the profile's vacation hold.
+        holdType: skip
+          ? recurringSkipScope(skip) === "WEEK"
+            ? "WEEK"
+            : "INSTANCE"
+          : templateHold
+            ? "TEMPLATE"
+            : null,
         skipDate: skip ? dateKey(skip.skipDate) : null,
         holdReason: skip?.reason ?? null,
         generatedOrderId: order?.id ?? null,

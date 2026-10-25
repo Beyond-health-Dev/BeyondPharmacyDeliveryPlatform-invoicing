@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import {
-  getVancouverDeliveryDateInfo,
-  hasRecurringSkipForDate,
-  isRecurringScheduleDue,
-} from "@/lib/cron";
+import { getVancouverDeliveryDateInfo, isRecurringScheduleDue } from "@/lib/cron";
+import { hasRecurringSkipForDate, isVacationHoldActive } from "@/lib/recurringHolds";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -129,12 +126,7 @@ export async function GET(
   const seenDueRecurringPeople: Array<RecurringPersonInput> = [];
 
   for (const recurring of recurringOrders) {
-    if (
-      recurring.isOnHold &&
-      (!recurring.holdEnd || recurring.holdEnd >= deliveryDate.dayStart)
-    ) {
-      continue;
-    }
+    if (isVacationHoldActive(recurring, deliveryDate.dayStart)) continue;
 
     const activeDays = parseActiveDays(recurring.activeDays);
     if (!activeDays) continue;

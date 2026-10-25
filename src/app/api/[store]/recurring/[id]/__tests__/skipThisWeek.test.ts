@@ -63,7 +63,9 @@ describe("Skip This Week / Unskip use the pharmacy's week", () => {
 
     const upsert = mocks.upsert.mock.calls[0][0];
     expect(upsert.where.recurringOrderId_skipDate.skipDate).toEqual(midnight(weekKey));
-    expect(upsert.create.skipDate).toEqual(midnight(weekKey));
+    expect(upsert.create).toMatchObject({ skipDate: midnight(weekKey), scope: "WEEK", reason: "Patient picked up in-store" });
+    // Takes over a one-day hold already on that Sunday.
+    expect(upsert.update).toEqual({ reason: "Patient picked up in-store", scope: "WEEK" });
     // Cancels that week's open orders, not the next week's.
     const cancelled = mocks.updateMany.mock.calls[0][0];
     expect(cancelled.where.scheduledDate.gte).toEqual(midnight(weekKey));
@@ -74,6 +76,19 @@ describe("Skip This Week / Unskip use the pharmacy's week", () => {
     vi.setSystemTime(new Date("2026-10-25T02:00:00Z"));
     const res = await unskip(post("unskip"), context);
     expect(res.status).toBe(200);
+    // Only the week skip: a one-day hold on that Sunday stays.
+    expect(mocks.deleteMany).toHaveBeenCalledWith({
+      where: {
+        recurringOrderId: "rec_1",
+        skipDate: midnight("2026-10-18"),
+        OR: [{ scope: "WEEK" }, { scope: null, reason: "Patient picked up in-store" }],
+      },
+    });
+  });
+
+  it("resumes whatever holds the date the calendar sends", async () => {
+    vi.setSystemTime(new Date("2026-10-25T02:00:00Z"));
+    await unskip(post("unskip", { skipDate: "2026-10-18" }), context);
     expect(mocks.deleteMany).toHaveBeenCalledWith({
       where: { recurringOrderId: "rec_1", skipDate: midnight("2026-10-18") },
     });
@@ -82,7 +97,10 @@ describe("Skip This Week / Unskip use the pharmacy's week", () => {
   it("still uses the date the calendar sends for a one-day hold", async () => {
     vi.setSystemTime(new Date("2026-10-25T02:00:00Z"));
     await skip(post("skip", { skipDate: "2026-10-27", reason: "In hospital" }), context);
-    expect(mocks.upsert.mock.calls[0][0].create.skipDate).toEqual(midnight("2026-10-27"));
+    const upsert = mocks.upsert.mock.calls[0][0];
+    expect(upsert.create).toMatchObject({ skipDate: midnight("2026-10-27"), scope: "DAY", reason: "In hospital" });
+    // Never turns a week skip on that date into a one-day hold.
+    expect(upsert.update).toEqual({ reason: "In hospital" });
     const cancelled = mocks.updateMany.mock.calls[0][0];
     expect(cancelled.where.scheduledDate).toEqual({ gte: midnight("2026-10-27"), lt: midnight("2026-10-28") });
   });

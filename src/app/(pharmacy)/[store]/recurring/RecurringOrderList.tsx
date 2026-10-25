@@ -54,8 +54,16 @@ interface RecurringOrderItem {
   holdStart: string | null;
   holdEnd: string | null;
   isSkippedThisWeek: boolean;
+  heldDaysThisWeek: number;
+  holdUpcoming: boolean;
   assignedDriverId: string | null;
   assignedDriverName: string | null;
+}
+
+// Not on a vacation hold, or the hold hasn't started yet: deliveries (and so
+// skipping them) still apply.
+function deliveringThisWeek(order: Pick<RecurringOrderItem, "isOnHold" | "holdUpcoming">) {
+  return !order.isOnHold || order.holdUpcoming;
 }
 
 function lastNameGroup(patientName: string) {
@@ -597,13 +605,20 @@ export default function RecurringOrderList({
                             <span className={statusBadgeClasses("HOLD")}>
                               {/* Hold dates are stored as UTC midnight; format in UTC so the
                                   badge doesn't show the previous day in local time. */}
-                              On Hold {order.holdStart && order.holdEnd
+                              {order.holdUpcoming ? "Upcoming hold" : "On Hold"} {order.holdStart && order.holdEnd
                                 ? `${new Date(order.holdStart).toLocaleDateString(undefined, { timeZone: "UTC" })} – ${new Date(order.holdEnd).toLocaleDateString(undefined, { timeZone: "UTC" })}`
                                 : ""}
                             </span>
                           )}
-                          {order.isSkippedThisWeek && !order.isOnHold && (
+                          {order.isSkippedThisWeek && deliveringThisWeek(order) && (
                             <span className={statusBadgeClasses("SKIPPED")}>Skipped this week</span>
+                          )}
+                          {!order.isSkippedThisWeek && order.heldDaysThisWeek > 0 && deliveringThisWeek(order) && (
+                            <span className={statusBadgeClasses("SKIPPED")}>
+                              {order.heldDaysThisWeek === 1
+                                ? "1 day held this week"
+                                : `${order.heldDaysThisWeek} days held this week`}
+                            </span>
                           )}
                           {!order.isActive && (
                             <span className={statusBadgeClasses("INACTIVE")}>Inactive</span>
@@ -614,7 +629,7 @@ export default function RecurringOrderList({
                               {order.isOnHold ? "Remove Hold" : "Vacation Hold"}
                             </button>
                           )}
-                          {order.isActive && !order.isOnHold && (
+                          {order.isActive && deliveringThisWeek(order) && (
                             <button onClick={() => toggleSkip(order.id, order.isSkippedThisWeek)} disabled={loading === order.id}
                               className={button("secondary", "sm")}>
                               {order.isSkippedThisWeek ? "Unskip" : "Skip This Week"}

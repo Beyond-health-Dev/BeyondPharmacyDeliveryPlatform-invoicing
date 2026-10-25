@@ -36,7 +36,9 @@ interface CalendarInstance {
   assignedDriverName: string | null;
   assignedDriverId: string | null;
   isHeld: boolean;
-  holdType: "INSTANCE" | "TEMPLATE" | null;
+  // INSTANCE: a one-day hold; WEEK: Skip This Week from the profile list;
+  // TEMPLATE: the profile's vacation hold.
+  holdType: "INSTANCE" | "WEEK" | "TEMPLATE" | null;
   skipDate: string | null;
   holdReason: string | null;
   generatedOrderStatus: string | null;
@@ -463,9 +465,11 @@ export default function RecurringCalendar({
                 value={
                   selectedInstance.holdType === "TEMPLATE"
                     ? "Vacation hold"
-                    : selectedInstance.isHeld
-                      ? "Hold active"
-                      : "Active"
+                    : selectedInstance.holdType === "WEEK"
+                      ? "Skipped this week"
+                      : selectedInstance.isHeld
+                        ? "Hold active"
+                        : "Active"
                 }
               />
               {selectedInstance.generatedOrderStatus && (
@@ -515,9 +519,11 @@ export default function RecurringCalendar({
                 >
                   {busyInstance === selectedInstance.id
                     ? "Updating..."
-                    : selectedInstance.isHeld
-                      ? "Resume"
-                      : "Hold"}
+                    : selectedInstance.holdType === "WEEK"
+                      ? "Resume Week"
+                      : selectedInstance.isHeld
+                        ? "Resume"
+                        : "Hold"}
                 </button>
               )}
               <button
