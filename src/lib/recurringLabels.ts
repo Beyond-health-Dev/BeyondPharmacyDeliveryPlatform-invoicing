@@ -235,15 +235,17 @@ function isWinAnsi(codePoint: number) {
   );
 }
 
-function isCombiningMark(codePoint: number) {
-  return codePoint >= 0x0300 && codePoint <= 0x036f;
-}
+// Invisible characters pasted in with names and addresses (zero-width spaces,
+// direction marks, soft hyphens...) and accents left over on their own.
+const INVISIBLE = /\p{Cf}/u;
+const MARK = /\p{M}/u;
 
 /** Text the PDF font can draw: accents kept where possible, else stripped; "?" otherwise. */
 export function toWinAnsi(text: string) {
   let out = "";
   for (const char of text.normalize("NFC")) {
     const codePoint = char.codePointAt(0) ?? 0;
+    if (INVISIBLE.test(char) || MARK.test(char)) continue;
     if (isWinAnsi(codePoint)) {
       out += char;
       continue;
@@ -252,9 +254,8 @@ export function toWinAnsi(text: string) {
       out += " ";
       continue;
     }
-    const base = [...char.normalize("NFD")]
-      .filter((part) => !isCombiningMark(part.codePointAt(0) ?? 0))
-      .join("");
+    // NFKD also folds ligatures and full-width letters ("ﬁ" -> "fi").
+    const base = [...char.normalize("NFKD")].filter((part) => !MARK.test(part)).join("");
     if (base && [...base].every((part) => isWinAnsi(part.codePointAt(0) ?? 0))) {
       out += base;
     } else {
@@ -265,7 +266,7 @@ export function toWinAnsi(text: string) {
 }
 
 function cleanText(value: string | null | undefined) {
-  return toWinAnsi((value ?? "").replace(/\s+/g, " ").trim());
+  return toWinAnsi(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 /** "v3w3l5" -> "V3W 3L5"; anything that isn't a Canadian postal code is just tidied. */

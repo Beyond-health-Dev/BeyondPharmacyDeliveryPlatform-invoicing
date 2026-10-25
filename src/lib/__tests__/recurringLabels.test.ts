@@ -250,6 +250,27 @@ describe("label text", () => {
     expect(toWinAnsi("Erd" + String.fromCharCode(0x0151) + "s")).toBe("Erdos");
     expect(toWinAnsi(String.fromCharCode(0x0a38) + "x")).toBe("?x");
   });
+
+  it("drops invisible characters and stray accents instead of printing ?", () => {
+    const char = String.fromCharCode;
+    // Zero-width space, soft hyphen, left-to-right mark, word joiner.
+    expect(toWinAnsi(`Jo${char(0x200b)}hn ${char(0xad)}Smith ${char(0x200e)}Ali${char(0x2060)}`)).toBe("John Smith Ali");
+    // An accent with nothing to sit on (q + combining tilde) and a decomposed é.
+    expect(toWinAnsi(`q${char(0x303)}`)).toBe("q");
+    expect(toWinAnsi(`Rene${char(0x301)}e`)).toBe("Renée");
+    // Ligatures and full-width letters fold to plain letters.
+    expect(toWinAnsi(`Gri${char(0xfb03)}n`)).toBe("Griffin");
+    expect(toWinAnsi(`${char(0xff21)}${char(0xff42)}`)).toBe("Ab");
+    // A trailing direction mark doesn't leave a trailing space on the label.
+    expect(
+      formatLabelLines({
+        patientName: `John Smith ${char(0x200f)}`,
+        deliveryAddress: `123 Main St${char(0x200b)}`,
+        deliveryCity: "Surrey",
+        deliveryPostalCode: "V3W 3L5",
+      }).slice(0, 2)
+    ).toEqual(["John Smith", "123 Main St"]);
+  });
 });
 
 describe("fitLabelLine", () => {
