@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  WEEK_OVER_DAY,
   WEEK_SKIP_REASON,
   dayHoldUpdate,
   findRecurringSkipForDate,
@@ -7,6 +8,7 @@ import {
   isVacationHoldActive,
   recurringSkipScope,
   undoWeekSkip,
+  weekSkipUpdate,
 } from "@/lib/recurringHolds";
 
 const date = (key: string) => new Date(`${key}T00:00:00.000Z`);
@@ -60,21 +62,41 @@ describe("hasRecurringSkipForDate", () => {
 
 describe("a one-day hold and a week skip sharing a Sunday", () => {
   const sunday = date("2026-10-18");
+  const dayHold = { skipDate: sunday, scope: "DAY", reason: "In hospital" };
+  const weekSkip = { skipDate: sunday, scope: "WEEK", reason: WEEK_SKIP_REASON };
+  const both = { skipDate: sunday, scope: WEEK_OVER_DAY, reason: "In hospital" };
+  // Saved by older code, without a scope.
+  const oldWeekSkip = { skipDate: sunday, scope: null, reason: WEEK_SKIP_REASON };
+
+  it("reads a shared Sunday as a week skip", () => {
+    expect(recurringSkipScope(both)).toBe("WEEK");
+    expect(hasRecurringSkipForDate([both], day("2026-10-21"))).toBe(true);
+  });
+
+  it("Skip This Week takes over a one-day hold without losing it", () => {
+    expect(weekSkipUpdate(null, WEEK_SKIP_REASON)).toEqual({ scope: "WEEK", reason: WEEK_SKIP_REASON });
+    expect(weekSkipUpdate(dayHold, WEEK_SKIP_REASON)).toEqual({ scope: WEEK_OVER_DAY });
+    // Even when the hold's reason reads like a week skip's.
+    expect(weekSkipUpdate({ ...dayHold, reason: WEEK_SKIP_REASON }, WEEK_SKIP_REASON)).toEqual({ scope: WEEK_OVER_DAY });
+    expect(weekSkipUpdate(both, WEEK_SKIP_REASON)).toEqual({});
+    expect(weekSkipUpdate(oldWeekSkip, WEEK_SKIP_REASON)).toEqual({ scope: "WEEK", reason: WEEK_SKIP_REASON });
+  });
 
   it("a one-day hold never turns a week skip into a one-day hold", () => {
     expect(dayHoldUpdate(null, "In hospital")).toEqual({ scope: "DAY", reason: "In hospital" });
-    expect(dayHoldUpdate({ skipDate: sunday, scope: "DAY", reason: "Away" }, "In hospital")).toEqual({ scope: "DAY", reason: "In hospital" });
-    expect(dayHoldUpdate({ skipDate: sunday, scope: "WEEK", reason: WEEK_SKIP_REASON }, "In hospital")).toEqual({ scope: "WEEK", reason: "In hospital" });
-    // A week skip saved by older code, without a scope.
-    expect(dayHoldUpdate({ skipDate: sunday, scope: null, reason: WEEK_SKIP_REASON }, "In hospital")).toEqual({ scope: "WEEK", reason: "In hospital" });
+    expect(dayHoldUpdate({ ...dayHold, reason: "Away" }, "In hospital")).toEqual({ scope: "DAY", reason: "In hospital" });
+    expect(dayHoldUpdate(weekSkip, "In hospital")).toEqual({ scope: WEEK_OVER_DAY, reason: "In hospital" });
+    expect(dayHoldUpdate(oldWeekSkip, "In hospital")).toEqual({ scope: WEEK_OVER_DAY, reason: "In hospital" });
+    expect(dayHoldUpdate(both, "Away")).toEqual({ scope: WEEK_OVER_DAY, reason: "Away" });
   });
 
   it("undoing the week deletes a plain week skip and gives back a one-day hold under it", () => {
     expect(undoWeekSkip(null)).toBe("none");
-    expect(undoWeekSkip({ skipDate: sunday, scope: "DAY", reason: "In hospital" })).toBe("none");
-    expect(undoWeekSkip({ skipDate: sunday, scope: "WEEK", reason: WEEK_SKIP_REASON })).toBe("delete");
-    expect(undoWeekSkip({ skipDate: sunday, scope: null, reason: WEEK_SKIP_REASON })).toBe("delete");
-    expect(undoWeekSkip({ skipDate: sunday, scope: "WEEK", reason: "In hospital" })).toBe("restoreDay");
+    expect(undoWeekSkip(dayHold)).toBe("none");
+    expect(undoWeekSkip(weekSkip)).toBe("delete");
+    expect(undoWeekSkip(oldWeekSkip)).toBe("delete");
+    expect(undoWeekSkip(both)).toBe("restoreDay");
+    expect(undoWeekSkip({ ...both, reason: WEEK_SKIP_REASON })).toBe("restoreDay");
   });
 });
 

@@ -7,6 +7,12 @@
 /** The reason "Skip This Week" stores when staff don't give one. */
 export const WEEK_SKIP_REASON = "Patient picked up in-store";
 
+// A Sunday has one skip row, so a one-day hold and a week skip on the same
+// Sunday share it. The row is then stored as WEEK_OVER_DAY: a week skip that
+// keeps the one-day hold's reason, and gives the hold back when the week is
+// undone.
+export const WEEK_OVER_DAY = "WEEK_OVER_DAY";
+
 export type RecurringSkipScope = "DAY" | "WEEK";
 
 export interface RecurringSkipCandidate {
@@ -17,12 +23,14 @@ export interface RecurringSkipCandidate {
 
 /**
  * DAY skips hold one calendar day; WEEK skips ("Skip This Week") hold the
- * whole week starting on their date, a Sunday. Rows saved before the scope
- * was recorded (or by older code during a deploy) have no scope: back then
- * Skip This Week always saved the week's Sunday with WEEK_SKIP_REASON.
+ * whole week starting on their date, a Sunday, and so do WEEK_OVER_DAY rows
+ * (below). Rows saved before the scope was recorded (or by older code during
+ * a deploy) have no scope: back then Skip This Week always saved the week's
+ * Sunday with WEEK_SKIP_REASON.
  */
 export function recurringSkipScope(skip: RecurringSkipCandidate): RecurringSkipScope {
-  if (skip.scope === "WEEK" || skip.scope === "DAY") return skip.scope;
+  if (skip.scope === "WEEK" || skip.scope === WEEK_OVER_DAY) return "WEEK";
+  if (skip.scope === "DAY") return "DAY";
   return skip.skipDate.getUTCDay() === 0 && skip.reason === WEEK_SKIP_REASON ? "WEEK" : "DAY";
 }
 
@@ -53,23 +61,24 @@ export function hasRecurringSkipForDate(
   return findRecurringSkipForDate(skips, deliveryDate) !== undefined;
 }
 
-// A Sunday has one skip row, so a one-day hold and a week skip on the same
-// Sunday share it: the row is a WEEK skip that keeps the one-day hold's reason.
-// Week skips otherwise always carry WEEK_SKIP_REASON, so any other reason on a
-// week row is a one-day hold waiting underneath, given back when the week is
-// undone.
+/** The update for Skip This Week on a Sunday that may already have a row. */
+export function weekSkipUpdate(existing: RecurringSkipCandidate | null, reason: string) {
+  if (existing?.scope === WEEK_OVER_DAY) return {};
+  if (existing && recurringSkipScope(existing) === "DAY") return { scope: WEEK_OVER_DAY };
+  return { scope: "WEEK", reason };
+}
 
 /** The update for a one-day hold on a date that may already have a row. */
 export function dayHoldUpdate(existing: RecurringSkipCandidate | null, reason: string) {
   return existing && recurringSkipScope(existing) === "WEEK"
-    ? { scope: "WEEK" as const, reason }
-    : { scope: "DAY" as const, reason };
+    ? { scope: WEEK_OVER_DAY, reason }
+    : { scope: "DAY", reason };
 }
 
 /** What undoing Skip This Week does to the row on the week's Sunday. */
 export function undoWeekSkip(row: RecurringSkipCandidate | null): "none" | "delete" | "restoreDay" {
   if (!row || recurringSkipScope(row) !== "WEEK") return "none";
-  return row.reason && row.reason !== WEEK_SKIP_REASON ? "restoreDay" : "delete";
+  return row.scope === WEEK_OVER_DAY ? "restoreDay" : "delete";
 }
 
 export interface VacationHold {

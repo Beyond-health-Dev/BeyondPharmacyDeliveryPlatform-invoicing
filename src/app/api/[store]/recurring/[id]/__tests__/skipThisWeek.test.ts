@@ -159,6 +159,25 @@ describe("one-day holds and Skip This Week stay separate", () => {
     expect(heldOn("2026-10-21")).toBe(false);
   });
 
+  it("gives back a one-day Sunday hold even when its reason reads like a week skip's", async () => {
+    await call("skip", { skipDate: "2026-10-18", reason: WEEK_REASON });
+    await call("skip");
+    expect(heldOn("2026-10-21")).toBe(true);
+    await call("unskip");
+    expect(rowsNow()).toEqual([{ date: "2026-10-18", scope: "DAY", reason: WEEK_REASON }]);
+    expect(heldOn("2026-10-18")).toBe(true);
+    expect(heldOn("2026-10-21")).toBe(false);
+  });
+
+  it("a second Skip This Week click keeps the one-day hold under it", async () => {
+    await call("skip", { skipDate: "2026-10-18", reason: "In hospital" });
+    await call("skip");
+    await call("skip");
+    expect(rowsNow()).toEqual([{ date: "2026-10-18", scope: "WEEK_OVER_DAY", reason: "In hospital" }]);
+    await call("unskip");
+    expect(rowsNow()).toEqual([{ date: "2026-10-18", scope: "DAY", reason: "In hospital" }]);
+  });
+
   it("the calendar's Resume Week does the same", async () => {
     await call("skip", { skipDate: "2026-10-18", reason: "In hospital" });
     await call("skip");
