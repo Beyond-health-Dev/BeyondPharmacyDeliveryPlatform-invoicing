@@ -52,6 +52,7 @@ export type SerializedOrder = {
   externalProvider: string | null;
   externalDispatchId: string | null;
   canCancelExternal: boolean;
+  hasAnchorStop: boolean;
   // Anchor rows only (null / false in-house), worked out on the server: the
   // badge text, a short line under it such as when Anchor gets the order,
   // and whether a held order missed its send (shown like a failed one).

@@ -62,13 +62,18 @@ function at(time: string) {
 
 // What the pages work out on the server for an Anchor row (cancel, badge
 // text, note, attention look), at 11 AM like the screenshot script's clock.
-function anchorStatus(status: string, dateKey: string, spokeStopId: string | null = null) {
+function anchorStatus(
+  status: string,
+  dateKey: string,
+  spokeStopId: string | null = null,
+  workflowStep: string | null = null
+) {
   return externalDispatchRowView(
-    { status, spokeStopId, scheduledDate: new Date(`${dateKey}T00:00:00.000Z`) },
+    { status, spokeStopId, workflowStep, scheduledDate: new Date(`${dateKey}T00:00:00.000Z`) },
     { todayKey: TODAY, vancouverHour: 11 }
   );
 }
-const IN_HOUSE_STATUS = { statusLabel: null, statusNote: null, needsAttention: false };
+const IN_HOUSE_STATUS = { hasAnchorStop: false, statusLabel: null, statusNote: null, needsAttention: false };
 
 export const dashboardDeliveries: DashboardDelivery[] = [
   { id: "o1", patientName: "Avery Sandhu", deliveryAddress: "14250 88 Ave", deliveryCity: "Surrey", driverName: "Derek Olsen", status: "ASSIGNED", priceAtCreation: 4.25, failedReason: null, createdAt: at("17:10"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
@@ -80,6 +85,8 @@ export const dashboardDeliveries: DashboardDelivery[] = [
   // Never reached Anchor: Retry and Cancel side by side.
   { id: "external-x2", patientName: "Sam Gill", deliveryAddress: "7380 120 St", deliveryCity: "Delta", driverName: "Anchor", status: "DISPATCH_FAILED", priceAtCreation: 4.25, failedReason: "Spoke did not respond", createdAt: at("15:30"), isExternal: true, externalDispatchId: "x2", ...anchorStatus("DISPATCH_FAILED", TODAY) },
   { id: "external-x5", patientName: "Alex Grewal", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: "Anchor", status: "DELIVERY_FAILED", priceAtCreation: 5.25, failedReason: null, createdAt: at("15:20"), isExternal: true, externalDispatchId: "x5", ...anchorStatus("DELIVERY_FAILED", TODAY, "plans/p1/stops/s5") },
+  // Cancelled here, but its stop couldn't be removed at Anchor: shown like a failure.
+  { id: "external-x8", patientName: "Drew Sidhu", deliveryAddress: "9045 160 St", deliveryCity: "Surrey", driverName: "Anchor", status: "CANCELLED", priceAtCreation: 4.25, failedReason: null, createdAt: at("15:10"), isExternal: true, externalDispatchId: "x8", ...anchorStatus("CANCELLED", TODAY, "unassignedStops/u8", "CANCEL_CLEANUP_FAILED") },
   { id: "o4", patientName: "Taylor Dhillon", deliveryAddress: "10153 King George Blvd", deliveryCity: "Surrey", driverName: "Priya Bains", status: "DELIVERED", priceAtCreation: 4.25, failedReason: null, createdAt: at("15:05"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
   { id: "o5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: null, status: "PENDING", priceAtCreation: 5.25, failedReason: null, createdAt: at("14:40"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
 ];
@@ -109,7 +116,8 @@ function order(o: Partial<SerializedOrder> & Pick<SerializedOrder, "id" | "patie
 // An Anchor row, worded as the page words it.
 function anchorOrder(
   o: Partial<SerializedOrder> & Pick<SerializedOrder, "id" | "patientName" | "status" | "scheduledDate">,
-  spokeStopId: string | null = null
+  spokeStopId: string | null = null,
+  workflowStep: string | null = null
 ): SerializedOrder {
   return order({
     assignedDriverId: null,
@@ -117,7 +125,7 @@ function anchorOrder(
     isExternal: true,
     externalProvider: "Spoke",
     externalDispatchId: o.id.replace(/^external-/, ""),
-    ...anchorStatus(o.status, o.scheduledDate.slice(0, 10), spokeStopId),
+    ...anchorStatus(o.status, o.scheduledDate.slice(0, 10), spokeStopId, workflowStep),
     ...o,
   });
 }
@@ -135,6 +143,8 @@ export const groupedOrders: Record<string, SerializedOrder[]> = {
     // Never reached Anchor: Retry and Cancel side by side.
     anchorOrder({ id: "external-x2", patientName: "Sam Gill", status: "DISPATCH_FAILED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "7380 120 St", deliveryCity: "Delta" }),
     anchorOrder({ id: "external-x5", patientName: "Alex Grewal", status: "DELIVERY_FAILED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", deliveryZoneName: "Coquitlam", priceAtCreation: 5.25 }, "plans/p1/stops/s5"),
+    // Cancelled here, but its stop couldn't be removed at Anchor: shown like a failure.
+    anchorOrder({ id: "external-x8", patientName: "Drew Sidhu", status: "CANCELLED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "9045 160 St" }, "unassignedStops/u8", "CANCEL_CLEANUP_FAILED"),
     order({ id: "o3", patientName: "Morgan Patel", status: "FAILED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", deliveryZoneName: "White Rock" }),
   ],
   [YESTERDAY]: [

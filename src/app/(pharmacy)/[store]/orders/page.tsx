@@ -87,6 +87,7 @@ export default async function OrdersPage({
       externalProvider: null,
       externalDispatchId: null,
       canCancelExternal: false,
+      hasAnchorStop: false,
       statusLabel: null,
       statusNote: null,
       needsAttention: false,

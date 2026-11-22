@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   resolveStore: vi.fn(),
   createStop: vi.fn(),
+  deleteStop: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -31,6 +32,7 @@ vi.mock("@/lib/db", async () => {
 vi.mock("@/lib/spoke", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/spoke")>()),
   createSpokeUnassignedStop: mocks.createStop,
+  deleteSpokeUnassignedStop: mocks.deleteStop,
 }));
 
 import { POST } from "../route";
@@ -69,6 +71,7 @@ beforeEach(() => {
   mocks.resolveStore.mockResolvedValue({ ...table.STORE, isActive: true });
   mocks.auth.mockResolvedValue({ user: { id: "admin_1", role: "PHARMACY_ADMIN", storeId: table.STORE.id } });
   mocks.createStop.mockResolvedValue({ stopId: "unassignedStops/u1", pending: false, requestPayload: {}, responsePayload: {} });
+  mocks.deleteStop.mockResolvedValue({ requestPayload: null, responsePayload: null });
 });
 
 afterEach(() => {
@@ -96,6 +99,50 @@ describe("POST /api/[store]/orders, Anchor order saved again with the same reque
     });
     expect(table.rows).toEqual([before]);
     expect(mocks.createStop).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 when a same-day save is repeated after the order was cancelled", async () => {
+    const cancelled = table.addRow({
+      idempotencyKey: KEY,
+      status: "CANCELLED",
+      workflowStep: "CANCEL_UNASSIGNED_STOP",
+      scheduledDate: new Date("2026-11-22T00:00:00.000Z"),
+    });
+    const before = { ...cancelled };
+
+    const { status, body } = await save("2026-11-22");
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({
+      error: "This order was already saved for Sun, Nov 22 and then cancelled. Save it again to make a new order.",
+      external: true,
+    });
+    expect(table.rows).toEqual([before]);
+    expect(mocks.createStop).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 when the order is cancelled while this save sends it", async () => {
+    mocks.createStop.mockImplementation(async () => {
+      // The row this save made, as the cancel route leaves it.
+      Object.assign(table.rows[0], { status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
+      return { stopId: "unassignedStops/u1", pending: false, requestPayload: {}, responsePayload: {} };
+    });
+
+    const { status, body } = await save("2026-11-22");
+
+    expect(status).toBe(409);
+    expect(body.error).toBe(
+      "This order was already saved for Sun, Nov 22 and then cancelled. Save it again to make a new order."
+    );
+    // The stop it had just made is taken back out of Anchor's list.
+    expect(mocks.deleteStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers 201 for a new same-day order sent to Anchor", async () => {
+    const { status, body } = await save("2026-11-22");
+
+    expect(status).toBe(201);
+    expect(body).toMatchObject({ external: true, status: "SUBMITTED", spokeStopId: "unassignedStops/u1" });
   });
 
   it("holds a new order for tomorrow", async () => {

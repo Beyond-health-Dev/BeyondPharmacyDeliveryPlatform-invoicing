@@ -11,6 +11,8 @@ interface ExternalDispatchActionsProps {
   dispatchId: string | null;
   currentStatus: string;
   canCancel: boolean;
+  // A stop is recorded at Anchor (the cancel confirmation says it is removed).
+  hasAnchorStop?: boolean;
   storeSlug: string;
   // Names the buttons for screen readers ("Retry order for Riley Chen").
   patientName: string;
@@ -24,6 +26,7 @@ export default function ExternalDispatchActions({
   dispatchId,
   currentStatus,
   canCancel,
+  hasAnchorStop = false,
   storeSlug,
   patientName,
   onAttentionRow = false,
@@ -97,7 +100,7 @@ export default function ExternalDispatchActions({
     if (inFlight.current) return;
     if (
       !(await confirm({
-        message: cancelConfirmMessage(currentStatus),
+        message: cancelConfirmMessage(currentStatus, hasAnchorStop),
         // "Cancel" / "OK" would be ambiguous under "Cancel this order?".
         confirmLabel: "Cancel order",
         cancelLabel: "Keep order",

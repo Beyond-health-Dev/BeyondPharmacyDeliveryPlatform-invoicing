@@ -144,6 +144,7 @@ export default function OrdersList({
                               dispatchId={order.externalDispatchId}
                               currentStatus={order.status}
                               canCancel={order.canCancelExternal}
+                              hasAnchorStop={order.hasAnchorStop}
                               storeSlug={storeSlug}
                               patientName={order.patientName}
                             />

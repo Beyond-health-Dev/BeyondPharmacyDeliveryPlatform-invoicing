@@ -2,6 +2,7 @@ import { Prisma, type ExternalDispatch } from "@prisma/client";
 import { prisma } from "./db";
 import {
   alreadySavedMessage,
+  CANCEL_ALERT_NOT_RAISED,
   CANCEL_CLEANUP_FAILED_STEP,
   CANCELLED_BUT_ACTIVE_STEP,
   IN_FLIGHT_STEP,
@@ -140,7 +141,7 @@ function dateKeyOf(dispatch: Pick<ExternalDispatch, "scheduledDate">) {
 // that failed and is then made for another day arrives with the same key.
 // The row stays exactly as it is; the order route answers 409 with this, and
 // the form starts a new request for the next save.
-function alreadySavedConflict(dispatch: ExternalDispatch) {
+export function alreadySavedConflict(dispatch: ExternalDispatch) {
   return new SpokeDispatchError(
     alreadySavedMessage(
       { status: dispatch.status, scheduledDateKey: dateKeyOf(dispatch) },
@@ -158,16 +159,6 @@ function checkExistingRow(dispatch: ExternalDispatch, input: SpokeDispatchInput)
   if (dispatch.storeId !== input.store.id) throw idempotencyConflict();
   if (dateKeyOf(dispatch) !== input.scheduledDateKey) throw alreadySavedConflict(dispatch);
 }
-
-// Rows no cancel-cleanup alert has been raised for yet (one per order).
-// workflowStep is nullable, and Prisma's notIn leaves NULL rows out, hence
-// the OR.
-const CANCEL_ALERT_NOT_RAISED = {
-  OR: [
-    { workflowStep: null },
-    { workflowStep: { notIn: [CANCEL_CLEANUP_FAILED_STEP, CANCELLED_BUT_ACTIVE_STEP] } },
-  ],
-};
 
 function cancelIncompleteMessage(dispatch: ExternalDispatch) {
   return `The order for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) was cancelled here while it was being sent, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it.`;
@@ -193,6 +184,15 @@ async function alertCancelIncomplete(dispatch: ExternalDispatch) {
 function stopMayExistAfterFailure(err: SpokeDispatchError) {
   const status = err.upstreamStatus;
   return status === null || status >= 500 || status === 409;
+}
+
+// The row as it now stands, or as it was last read if it can't be read.
+async function reread(dispatch: ExternalDispatch) {
+  try {
+    return (await prisma.externalDispatch.findUnique({ where: { id: dispatch.id } })) ?? dispatch;
+  } catch {
+    return dispatch;
+  }
 }
 
 // Two saves with the same key at once: the other one created the row first.
@@ -267,32 +267,39 @@ async function withdrawStopAfterCancel(
     }
   }
 
+  // Staff are told when the stop is left at Anchor, once per order; if the
+  // row can't be marked, they are told anyway.
+  let alert = !removed;
   try {
     await prisma.externalDispatch.updateMany({
       where: { id: dispatch.id, status: "CANCELLED" },
       data: { spokeStopId: stopId, externalReference: stopId },
     });
-    // Anchor's own update may have marked the row already (it went on to
-    // handle the order); that marker stays.
-    await prisma.externalDispatch.updateMany({
-      where: {
-        id: dispatch.id,
-        status: "CANCELLED",
-        OR: [{ workflowStep: null }, { workflowStep: { not: CANCELLED_BUT_ACTIVE_STEP } }],
-      },
-      data: { workflowStep: removed ? "CANCEL_UNASSIGNED_STOP" : CANCEL_CLEANUP_FAILED_STEP },
-    });
+    if (removed) {
+      // Anchor's own update may have marked the row already (it went on to
+      // handle the order); that marker stays.
+      await prisma.externalDispatch.updateMany({
+        where: {
+          id: dispatch.id,
+          status: "CANCELLED",
+          OR: [{ workflowStep: null }, { workflowStep: { not: CANCELLED_BUT_ACTIVE_STEP } }],
+        },
+        data: { workflowStep: "CANCEL_UNASSIGNED_STOP" },
+      });
+    } else {
+      const flagged = await prisma.externalDispatch.updateMany({
+        where: { id: dispatch.id, status: "CANCELLED", ...CANCEL_ALERT_NOT_RAISED },
+        data: { workflowStep: CANCEL_CLEANUP_FAILED_STEP },
+      });
+      alert = flagged.count > 0;
+    }
   } catch (err) {
     console.error(`[SPOKE] Failed to record the stop of cancelled order ${dispatch.id}:`, err);
   }
 
-  if (!removed) await alertCancelIncomplete(dispatch);
+  if (alert) await alertCancelIncomplete(dispatch);
 
-  try {
-    return (await prisma.externalDispatch.findUnique({ where: { id: dispatch.id } })) ?? dispatch;
-  } catch {
-    return dispatch;
-  }
+  return reread(dispatch);
 }
 
 // Sends an order to Spoke, or resumes a send (release of a SCHEDULED row,
@@ -500,7 +507,7 @@ export async function dispatchOrderToSpoke(
           creatingStop &&
           stopMayExistAfterFailure(spokeError)
         ) {
-          await flagCancelledStopMayExist(latest);
+          return { dispatch: await flagCancelledStopMayExist(latest), alreadyDispatched: true };
         }
         return { dispatch: latest, alreadyDispatched: true };
       }
@@ -512,8 +519,8 @@ export async function dispatchOrderToSpoke(
 
 // Cancelled during a create-stop call that failed in a way that may still
 // have made the stop at Spoke. Nobody knows its id, so staff remove it in
-// Spoke themselves. Never throws.
-async function flagCancelledStopMayExist(dispatch: ExternalDispatch) {
+// Spoke themselves. Never throws; returns the row as flagged.
+async function flagCancelledStopMayExist(dispatch: ExternalDispatch): Promise<ExternalDispatch> {
   try {
     const flagged = await prisma.externalDispatch.updateMany({
       where: { id: dispatch.id, status: "CANCELLED", ...CANCEL_ALERT_NOT_RAISED },
@@ -523,6 +530,7 @@ async function flagCancelledStopMayExist(dispatch: ExternalDispatch) {
   } catch (err) {
     console.error(`[SPOKE] Failed to flag cancelled order ${dispatch.id}:`, err);
   }
+  return reread(dispatch);
 }
 
 // A replayed hold (same request key): the row is returned exactly as it is

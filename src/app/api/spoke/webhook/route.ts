@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { CANCELLED_BUT_ACTIVE_STEP } from "@/lib/externalDispatchStatus";
+import {
+  CANCEL_ALERT_NOT_RAISED,
+  CANCEL_CLEANUP_FAILED_STEP,
+  CANCELLED_BUT_ACTIVE_STEP,
+} from "@/lib/externalDispatchStatus";
 import {
   canAdvanceDispatchStatus,
   mapSpokeWebhookStatus,
@@ -146,7 +150,8 @@ export async function POST(req: NextRequest) {
       // after Spoke made the stop, or a stop that had moved onto a route
       // when the cancel removed it. It stays cancelled (and its stop id is
       // left alone: it is unique), but the event is kept and staff are told
-      // once.
+      // once per order, counting the sender's alert for a stop it couldn't
+      // remove.
       if (isTrackingOnly || !ANCHOR_ACTIVE_STATUSES.has(mapped.status)) {
         return NextResponse.json({ ok: true, matched: 0, ignored: true });
       }
@@ -155,17 +160,16 @@ export async function POST(req: NextRequest) {
         webhookPayload: asPrismaJson(eventPayload),
       };
       const flagged = await prisma.externalDispatch.updateMany({
-        where: {
-          id: dispatch.id,
-          status: "CANCELLED",
-          OR: [
-            { workflowStep: null },
-            { workflowStep: { not: CANCELLED_BUT_ACTIVE_STEP } },
-          ],
-        },
+        where: { id: dispatch.id, status: "CANCELLED", ...CANCEL_ALERT_NOT_RAISED },
         data: { ...eventData, workflowStep: CANCELLED_BUT_ACTIVE_STEP },
       });
       if (flagged.count === 0) {
+        // Already alerted: a stop the sender couldn't remove is now one
+        // Anchor is handling, with no second alert.
+        await prisma.externalDispatch.updateMany({
+          where: { id: dispatch.id, status: "CANCELLED", workflowStep: CANCEL_CLEANUP_FAILED_STEP },
+          data: { workflowStep: CANCELLED_BUT_ACTIVE_STEP },
+        });
         await prisma.externalDispatch.updateMany({
           where: { id: dispatch.id, status: "CANCELLED" },
           data: eventData,

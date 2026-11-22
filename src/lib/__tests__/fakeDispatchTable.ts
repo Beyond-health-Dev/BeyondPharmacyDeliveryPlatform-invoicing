@@ -29,6 +29,7 @@ const FILTER_KEYS = new Set([
   "workflowStep",
   "storeId",
   "scheduledDate",
+  "updatedAt",
   "OR",
 ]);
 
@@ -41,6 +42,7 @@ function matchesValue(value: unknown, filter: unknown, key: string): boolean {
   return Object.entries(operators).every(([op, operand]) => {
     if (op === "in" && Array.isArray(operand)) return operand.includes(value);
     if (op === "lt" && operand instanceof Date && value instanceof Date) return value < operand;
+    if (op === "lte" && operand instanceof Date && value instanceof Date) return value <= operand;
     // As in SQL, `not` and `notIn` never match a NULL column.
     if (op === "not" && typeof operand === "string") return value !== null && value !== operand;
     if (op === "notIn" && Array.isArray(operand)) return value !== null && !operand.includes(value);

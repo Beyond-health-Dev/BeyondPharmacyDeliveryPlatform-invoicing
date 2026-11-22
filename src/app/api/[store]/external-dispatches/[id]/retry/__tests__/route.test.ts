@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as table from "@/lib/__tests__/fakeDispatchTable";
+import { SpokeDispatchError } from "@/lib/spoke";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -120,6 +121,24 @@ describe("POST /api/[store]/external-dispatches/[id]/retry", () => {
 
     expect(status).toBe(409);
     expect(body.error).toContain("may still be in Anchor's list");
+  });
+
+  it("says the order may still be in Anchor's list when a cancel lands mid-retry and the call times out", async () => {
+    // Spoke may have made the stop, but nobody knows its id.
+    const failed = table.addRow({ status: "DISPATCH_FAILED" });
+    mocks.createStop.mockImplementation(async () => {
+      Object.assign(table.row(failed.id), { status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
+      throw new SpokeDispatchError("Spoke CREATE_UNASSIGNED_STOP request timed out.", 502, null, "CREATE_UNASSIGNED_STOP", null);
+    });
+
+    const { status, body } = await retry(failed.id);
+
+    expect(status).toBe(409);
+    expect(body.error).toBe(
+      "This order was cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it."
+    );
+    expect(table.row(failed.id)).toMatchObject({ status: "CANCELLED", workflowStep: "CANCEL_CLEANUP_FAILED" });
+    expect(table.notifications).toHaveLength(1);
   });
 
   it("says so when the order is cancelled while the retry is out", async () => {

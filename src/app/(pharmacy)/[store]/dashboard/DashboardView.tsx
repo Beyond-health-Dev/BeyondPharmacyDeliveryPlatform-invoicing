@@ -36,6 +36,7 @@ export type DashboardDelivery = {
   isExternal: boolean;
   externalDispatchId: string | null;
   canCancelExternal: boolean;
+  hasAnchorStop: boolean;
   // Anchor rows only (null / false in-house), worked out on the server:
   // badge text, a note under it, and whether a held order missed its send.
   statusLabel: string | null;
@@ -167,6 +168,7 @@ export default function DashboardView({
                               dispatchId={order.externalDispatchId}
                               currentStatus={order.status}
                               canCancel={order.canCancelExternal}
+                              hasAnchorStop={order.hasAnchorStop}
                               storeSlug={storeSlug}
                               patientName={order.patientName}
                               onAttentionRow={failed}

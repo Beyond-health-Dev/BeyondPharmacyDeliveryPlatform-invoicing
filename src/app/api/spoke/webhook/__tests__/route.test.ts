@@ -1,10 +1,21 @@
 import crypto from "crypto";
 import { NextRequest } from "next/server";
+import type { ExternalDispatch } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as table from "@/lib/__tests__/fakeDispatchTable";
 
-vi.mock("@/lib/db", async () => (await import("@/lib/__tests__/fakeDispatchTable")).dbModule);
+const spoke = vi.hoisted(() => ({ createStop: vi.fn(), deleteStop: vi.fn() }));
 
+vi.mock("@/lib/db", async () => (await import("@/lib/__tests__/fakeDispatchTable")).dbModule);
+// Only the calls to Spoke are replaced; the webhook's own helpers are real.
+vi.mock("@/lib/spoke", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/spoke")>()),
+  createSpokeUnassignedStop: spoke.createStop,
+  deleteSpokeUnassignedStop: spoke.deleteStop,
+}));
+
+import { SpokeDispatchError } from "@/lib/spoke";
+import { dispatchOrderToSpoke } from "@/lib/spokeDispatch";
 import { POST } from "../route";
 
 const SECRET = "test-webhook-secret";
@@ -166,6 +177,81 @@ describe("Spoke webhook for an order cancelled here", () => {
 
     expect(table.row(cancelled.id)).toMatchObject({ status: "CANCELLED", workflowStep: "CANCELLED_BUT_ACTIVE" });
     expect(table.notifications).toHaveLength(1);
+  });
+
+  describe("one alert per order, with the sender", () => {
+    const stopCreated = { stopId: STOP, pending: false, requestPayload: {}, responsePayload: { id: STOP } };
+    const removeFails = () =>
+      spoke.deleteStop.mockRejectedValue(
+        new SpokeDispatchError("Spoke CANCEL_UNASSIGNED_STOP failed with status 500.", 502, null, "CANCEL_UNASSIGNED_STOP", 500)
+      );
+    // The release of a waiting order, with the details saved on its row.
+    const send = (row: ExternalDispatch) =>
+      dispatchOrderToSpoke({
+        ...row,
+        store: table.STORE,
+        selectedProviderUser: table.ANCHOR,
+        scheduledDateKey: row.scheduledDate.toISOString().slice(0, 10),
+      });
+    const cancelHere = (id: string) =>
+      Object.assign(table.row(id), { status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
+
+    beforeEach(() => {
+      vi.stubEnv("SPOKE_API_KEY", "test-key");
+      spoke.createStop.mockReset();
+      spoke.deleteStop.mockReset();
+    });
+
+    it.each([
+      ["couldn't remove the stop it made", () => stopCreated],
+      [
+        "may have left a stop behind (its call timed out)",
+        () => {
+          throw new SpokeDispatchError("Spoke CREATE_UNASSIGNED_STOP request timed out.", 502, null, "CREATE_UNASSIGNED_STOP", null);
+        },
+      ],
+    ])("doesn't alert again when the sender %s and Anchor then reports the order", async (_label, answer) => {
+      const waiting = table.addRow({ idempotencyKey: "order-1", status: "SCHEDULED" });
+      spoke.createStop.mockImplementation(async () => {
+        cancelHere(waiting.id);
+        return answer();
+      });
+      removeFails();
+
+      await send(waiting);
+      expect(table.row(waiting.id).workflowStep).toBe("CANCEL_CLEANUP_FAILED");
+      expect(table.notifications).toHaveLength(1);
+
+      await post(event("stop.allocated"));
+
+      expect(table.row(waiting.id)).toMatchObject({
+        status: "CANCELLED",
+        workflowStep: "CANCELLED_BUT_ACTIVE",
+        lastWebhookEventType: "stop.allocated",
+      });
+      expect(table.notifications).toHaveLength(1);
+    });
+
+    it("doesn't alert again when Anchor reports the order during the send and the stop then can't be removed", async () => {
+      const waiting = table.addRow({ idempotencyKey: "order-1", status: "SCHEDULED" });
+      spoke.createStop.mockImplementation(async () => {
+        cancelHere(waiting.id);
+        await post(event("stop.allocated"));
+        return stopCreated;
+      });
+      removeFails();
+
+      await send(waiting);
+
+      expect(spoke.deleteStop).toHaveBeenCalledTimes(1);
+      expect(table.row(waiting.id)).toMatchObject({
+        status: "CANCELLED",
+        workflowStep: "CANCELLED_BUT_ACTIVE",
+        spokeStopId: STOP,
+      });
+      expect(table.notifications).toHaveLength(1);
+      expect(table.notifications[0].message).toMatch(/^Anchor has started handling an order that was cancelled here/);
+    });
   });
 
   it("ignores unknown events and tracking links", async () => {

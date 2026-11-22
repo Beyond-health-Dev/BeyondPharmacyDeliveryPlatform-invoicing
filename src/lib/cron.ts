@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
-import { isHeldForRelease } from "./externalDispatchStatus";
+import { IN_FLIGHT_STEP } from "./externalDispatchStatus";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -19,6 +19,9 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 // Stop the generation run before the platform's 60s function limit kills it
 // mid-loop (Spoke's 5 req/s write cap makes large dispatch batches slow).
 const GENERATION_TIME_BUDGET_MS = 50_000;
+// A waiting order marked as being sent more recently than this is another
+// release run's; an older mark is a send that was cut short.
+const IN_FLIGHT_WINDOW_MS = 2 * 60 * 1000;
 
 let initialized = false;
 
@@ -684,15 +687,27 @@ export async function releaseDueSpokeDispatches(
 
   let released = 0;
   for (const dispatch of dueDispatches) {
-    // Re-read just before sending: the order may have been cancelled (or sent)
-    // since the list above was read. One another run is sending right now is
-    // sent again under the same idempotency key (Spoke makes one stop), and
-    // the sender's guarded writes settle the status.
-    const current = await prisma.externalDispatch.findUnique({
-      where: { id: dispatch.id },
-      select: { status: true },
+    // Take the order in one statement just before sending. It must still be
+    // waiting (not cancelled or sent since the list above was read) and not
+    // marked by another run that is sending it now (the 6 AM run and a
+    // Generate press can overlap); otherwise both would send it, and the
+    // loser's failed call would raise a false "not sent" alert. Skipped
+    // quietly. A run killed mid-send leaves the order waiting with an old
+    // mark, so a later run sends it. workflowStep is nullable, and a NOT over
+    // NULL matches nothing, hence the OR.
+    const taken = await prisma.externalDispatch.updateMany({
+      where: {
+        id: dispatch.id,
+        status: "SCHEDULED",
+        OR: [
+          { workflowStep: null },
+          { workflowStep: { not: IN_FLIGHT_STEP } },
+          { updatedAt: { lte: new Date(Date.now() - IN_FLIGHT_WINDOW_MS) } },
+        ],
+      },
+      data: { workflowStep: IN_FLIGHT_STEP },
     });
-    if (!current || !isHeldForRelease(current.status)) continue;
+    if (taken.count === 0) continue;
 
     try {
       const result = await dispatchOrderToSpoke({

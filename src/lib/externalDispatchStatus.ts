@@ -35,8 +35,9 @@ export const UNCONFIRMED_EXTERNAL_STATUSES: string[] = [
 // in-house FAILED order.
 export const FAILED_EXTERNAL_STATUSES: string[] = ["DELIVERY_FAILED", "DISPATCH_FAILED"];
 
-// workflowStep while the sender is talking to Spoke. The status is left as it
-// was, so a send cut short is picked up again by the next release run.
+// workflowStep while the sender is talking to Spoke (the release run sets it
+// as it takes a row). The status is left as it was, so a send cut short is
+// picked up again by a later release run.
 export const IN_FLIGHT_STEP = "SENDING";
 
 // workflowStep on a CANCELLED row whose stop may still be in Anchor's list:
@@ -46,13 +47,24 @@ export const CANCEL_CLEANUP_FAILED_STEP = "CANCEL_CLEANUP_FAILED";
 
 // workflowStep on a CANCELLED row that Anchor went on to allocate, route or
 // deliver anyway (its webhook says so). Staff were alerted to contact Anchor.
-// Nothing else overwrites it, so the alert goes out once per order.
+// Nothing else overwrites it; a CANCEL_CLEANUP_FAILED row moves on to it.
 export const CANCELLED_BUT_ACTIVE_STEP = "CANCELLED_BUT_ACTIVE";
+
+// Rows no "cancelled but may still be with Anchor" alert has been raised for
+// yet. Every path that raises one sets either marker above in the same
+// statement as this check, so an order gets one alert. workflowStep is
+// nullable, and Prisma's notIn leaves NULL rows out, hence the OR.
+export const CANCEL_ALERT_NOT_RAISED = {
+  OR: [
+    { workflowStep: null },
+    { workflowStep: { notIn: [CANCEL_CLEANUP_FAILED_STEP, CANCELLED_BUT_ACTIVE_STEP] } },
+  ],
+};
 
 // A cancelled order that may still reach the patient through Anchor.
 export function mayStillBeWithAnchorAfterCancel(dispatch: {
   status: string;
-  workflowStep: string | null;
+  workflowStep?: string | null;
 }) {
   return (
     dispatch.status === "CANCELLED" &&
@@ -112,6 +124,9 @@ interface StatusClock {
   scheduledDateKey: string;
   todayKey: string;
   vancouverHour: number;
+  // Left out: no stop at Anchor, and no cancel marker.
+  spokeStopId?: string | null;
+  workflowStep?: string | null;
 }
 
 // A held order the 6 AM run should already have sent: dated today from 7 AM
@@ -148,7 +163,15 @@ export function externalStatusNote(clock: StatusClock): string | null {
   if (isHeldForRelease(status)) {
     return `Goes to Anchor about 6 AM ${describeDeliveryDayFrom(scheduledDateKey, todayKey)}`;
   }
-  if (status === "DISPATCH_FAILED") return "Didn't reach Anchor. Press Retry to send it again.";
+  if (mayStillBeWithAnchorAfterCancel(clock)) {
+    return "Cancelled here, but Anchor may still have it. Remove it in Spoke.";
+  }
+  // With a stop id, Anchor has the stop; saving the send here didn't finish.
+  if (status === "DISPATCH_FAILED") {
+    return clock.spokeStopId
+      ? "Reached Anchor, but wasn't finished here. Press Retry to finish it."
+      : "Didn't reach Anchor. Press Retry to send it again.";
+  }
   if (status === "DELIVERY_FAILED") return "Anchor couldn't deliver it.";
   if (UNCONFIRMED.has(status) && scheduledDateKey < todayKey) {
     return "No confirmation from Anchor";
@@ -156,25 +179,34 @@ export function externalStatusNote(clock: StatusClock): string | null {
   return null;
 }
 
-// A held order that missed its send: shown like a failed one, so it doesn't
-// look as if it is still on its way.
+// Shown like a failed one: a held order that missed its send, so it doesn't
+// look as if it is still on its way, or a cancelled one Anchor may still have.
 export function externalNeedsAttention(clock: StatusClock) {
-  return missedRelease(clock) !== null;
+  return missedRelease(clock) !== null || mayStillBeWithAnchorAfterCancel(clock);
 }
 
 // What the Orders page and the dashboard show for an Anchor row, worked out
 // on the server (clock: Vancouver's today and hour).
 export function externalDispatchRowView(
-  dispatch: { status: string; spokeStopId: string | null; scheduledDate: Date },
+  dispatch: {
+    status: string;
+    spokeStopId: string | null;
+    workflowStep: string | null;
+    scheduledDate: Date;
+  },
   clock: { todayKey: string; vancouverHour: number }
 ) {
   const statusClock = {
     status: dispatch.status,
     scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
+    spokeStopId: dispatch.spokeStopId,
+    workflowStep: dispatch.workflowStep,
     ...clock,
   };
   return {
     canCancelExternal: canCancelExternalDispatch(dispatch),
+    // For the cancel confirmation (a stop at Anchor is removed).
+    hasAnchorStop: !!dispatch.spokeStopId,
     statusLabel: externalStatusLabel(dispatch.status),
     statusNote: externalStatusNote(statusClock),
     needsAttention: externalNeedsAttention(statusClock),
@@ -199,9 +231,13 @@ export function externalDispatchActions({
   };
 }
 
-export function cancelConfirmMessage(status: string) {
+// hasAnchorStop: a stop id is recorded, so the cancel removes it at Anchor.
+export function cancelConfirmMessage(status: string, hasAnchorStop = false) {
   if (isHeldForRelease(status)) {
     return "Cancel this order? It hasn't been sent to Anchor yet, so cancelling just removes it here.";
+  }
+  if (status === "DISPATCH_FAILED" && hasAnchorStop) {
+    return "Cancel this order? It reached Anchor but wasn't finished here, so cancelling removes it from Anchor's list.";
   }
   if (status === "DISPATCH_FAILED") {
     return "Cancel this order? Sending it to Anchor failed, so cancelling withdraws it here. If it did reach Anchor, check Anchor's list in Spoke and remove it there.";

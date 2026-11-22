@@ -61,39 +61,66 @@ describe("releaseDueSpokeDispatches", () => {
     expect(mocks.dispatch.mock.calls[1][0].scheduledDateKey).toBe("2026-11-23");
   });
 
-  it("skips an order cancelled after the list was read", async () => {
-    const cancelled = waiting("order-cancelled");
+  it.each(["CANCELLED", "SUBMITTED"])("skips quietly an order %s after the list was read", async (status) => {
+    const moved = waiting("order-moved");
     waiting("order-kept");
     table.externalDispatch.findMany.mockImplementationOnce(async (args) => {
       const listed = await table.impl.findMany(args);
-      table.row(cancelled.id).status = "CANCELLED";
+      table.row(moved.id).status = status;
       return listed;
     });
 
     expect(await release()).toBe(1);
     expect(sentKeys()).toEqual(["order-kept"]);
+    expect(table.row(moved.id).status).toBe(status);
+    expect(table.notifications).toEqual([]);
   });
 
-  it("sends an order marked as sending moments ago (that run may have been killed)", async () => {
-    // Overlapping runs send under the same idempotency key, and the sender's
-    // guarded writes settle the status; skipping it could leave it unsent.
-    waiting("order-sending", "2026-11-23", {
+  it("skips quietly an order another run marked as sending moments ago", async () => {
+    const sending = waiting("order-sending", "2026-11-23", {
       workflowStep: "SENDING",
       updatedAt: new Date(NOW.getTime() - 30 * 1000),
     });
+    const before = { ...sending };
 
-    expect(await release()).toBe(1);
-    expect(sentKeys()).toEqual(["order-sending"]);
+    expect(await release()).toBe(0);
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(table.notifications).toEqual([]);
+    expect(table.row(sending.id)).toEqual(before);
   });
 
-  it("sends an order whose send was cut short a while ago", async () => {
-    waiting("order-stale", "2026-11-23", {
+  it("takes and sends an order whose send was cut short a while ago", async () => {
+    const stale = waiting("order-stale", "2026-11-23", {
       workflowStep: "SENDING",
       updatedAt: new Date(NOW.getTime() - 5 * 60 * 1000),
     });
 
     expect(await release()).toBe(1);
     expect(sentKeys()).toEqual(["order-stale"]);
+    // Marked again as this run's, so an overlapping run leaves it alone.
+    expect(table.row(stale.id)).toMatchObject({ status: "SCHEDULED", workflowStep: "SENDING", updatedAt: NOW });
+  });
+
+  it("takes an order whose step was never set", async () => {
+    const unset = waiting("order-unset", "2026-11-23", {
+      workflowStep: null,
+      updatedAt: new Date(NOW.getTime() - 30 * 1000),
+    });
+
+    expect(await release()).toBe(1);
+    expect(sentKeys()).toEqual(["order-unset"]);
+    expect(table.row(unset.id).workflowStep).toBe("SENDING");
+  });
+
+  it("sends an order once when two runs start together", async () => {
+    // The 6 AM run and a Generate press, or a doubled cron call.
+    waiting("order-both");
+
+    const counts = await Promise.all([release(), release()]);
+
+    expect(counts.sort()).toEqual([0, 1]);
+    expect(sentKeys()).toEqual(["order-both"]);
+    expect(table.notifications).toEqual([]);
   });
 
   it("counts only orders this run actually sent", async () => {

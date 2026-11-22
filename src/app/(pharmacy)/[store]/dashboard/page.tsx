@@ -70,6 +70,7 @@ function toDashboardDelivery(order: DashboardOrder): DashboardDelivery {
     isExternal: false,
     externalDispatchId: null,
     canCancelExternal: false,
+    hasAnchorStop: false,
     statusLabel: null,
     statusNote: null,
     needsAttention: false,

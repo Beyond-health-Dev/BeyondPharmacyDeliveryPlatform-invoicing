@@ -446,7 +446,11 @@ describe("a failed Spoke call after the order moved on", () => {
 
       const result = await dispatchOrderToSpoke(sendInput());
 
-      expect(result).toMatchObject({ alreadyDispatched: true, dispatch: { status: "CANCELLED" } });
+      // The row as flagged, so callers word it as possibly left at Anchor.
+      expect(result).toMatchObject({
+        alreadyDispatched: true,
+        dispatch: { status: "CANCELLED", workflowStep: "CANCEL_CLEANUP_FAILED" },
+      });
       expect(byKey()).toMatchObject({ status: "CANCELLED", workflowStep: "CANCEL_CLEANUP_FAILED", errorMessage: null });
       expect(table.notifications).toHaveLength(1);
       expect(table.notifications[0]).toMatchObject({ type: "SPOKE_CANCEL_INCOMPLETE", storeId: table.STORE.id });

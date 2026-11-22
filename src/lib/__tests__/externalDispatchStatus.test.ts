@@ -154,7 +154,7 @@ describe("externalStatusNote", () => {
   });
 });
 
-describe("externalNeedsAttention (a held order that missed its send)", () => {
+describe("externalNeedsAttention (a held order that missed its send, or a cancel Anchor may still have)", () => {
   const todayKey = "2026-11-22";
   const attention = (status: string, scheduledDateKey: string, vancouverHour: number) =>
     externalNeedsAttention({ status, scheduledDateKey, todayKey, vancouverHour });
@@ -171,10 +171,17 @@ describe("externalNeedsAttention (a held order that missed its send)", () => {
     expect(attention("SCHEDULED", "2026-11-23", 23)).toBe(false);
   });
 
-  it("is only for held orders (failed ones are already shown as failed)", () => {
+  it("is otherwise only for held orders (failed ones are already shown as failed)", () => {
     for (const status of ["SUBMITTED", "DISPATCH_FAILED", "DELIVERY_FAILED", "CANCELLED", "ALLOCATED"]) {
       expect(attention(status, "2026-11-20", 11)).toBe(false);
     }
+  });
+
+  it("flags a cancelled order Anchor may still have, whatever its date", () => {
+    const cancelled = { status: "CANCELLED", scheduledDateKey: "2026-11-23", todayKey, vancouverHour: 3 };
+    expect(externalNeedsAttention({ ...cancelled, workflowStep: "CANCEL_CLEANUP_FAILED" })).toBe(true);
+    expect(externalNeedsAttention({ ...cancelled, workflowStep: "CANCELLED_BUT_ACTIVE" })).toBe(true);
+    expect(externalNeedsAttention({ ...cancelled, workflowStep: "CANCEL_UNASSIGNED_STOP" })).toBe(false);
   });
 });
 
@@ -184,9 +191,13 @@ describe("externalDispatchRowView (an Anchor row on Orders and the dashboard)", 
 
   it("offers Cancel on a held order with no stop, and says when Anchor gets it", () => {
     expect(
-      externalDispatchRowView({ status: "SCHEDULED", spokeStopId: null, scheduledDate: midnight("2026-11-23") }, clock)
+      externalDispatchRowView(
+        { status: "SCHEDULED", spokeStopId: null, workflowStep: "AWAITING_RELEASE", scheduledDate: midnight("2026-11-23") },
+        clock
+      )
     ).toEqual({
       canCancelExternal: true,
+      hasAnchorStop: false,
       statusLabel: "WAITING TO SEND",
       statusNote: "Goes to Anchor about 6 AM tomorrow",
       needsAttention: false,
@@ -196,15 +207,15 @@ describe("externalDispatchRowView (an Anchor row on Orders and the dashboard)", 
   it("doesn't offer Cancel once the stop is on one of Anchor's routes", () => {
     expect(
       externalDispatchRowView(
-        { status: "SUBMITTED", spokeStopId: "plans/p1/stops/s1", scheduledDate: midnight("2026-11-22") },
+        { status: "SUBMITTED", spokeStopId: "plans/p1/stops/s1", workflowStep: null, scheduledDate: midnight("2026-11-22") },
         clock
       )
-    ).toEqual({ canCancelExternal: false, statusLabel: "SUBMITTED", statusNote: null, needsAttention: false });
+    ).toEqual({ canCancelExternal: false, hasAnchorStop: true, statusLabel: "SUBMITTED", statusNote: null, needsAttention: false });
   });
 
   it("flags an overdue held order for attention", () => {
     const row = externalDispatchRowView(
-      { status: "SCHEDULED", spokeStopId: null, scheduledDate: midnight("2026-11-21") },
+      { status: "SCHEDULED", spokeStopId: null, workflowStep: null, scheduledDate: midnight("2026-11-21") },
       clock
     );
     expect(row).toMatchObject({ canCancelExternal: true, statusLabel: "WAITING TO SEND", needsAttention: true });
@@ -213,8 +224,61 @@ describe("externalDispatchRowView (an Anchor row on Orders and the dashboard)", 
 
   it("flags a held order for today that missed the 6 AM send", () => {
     expect(
-      externalDispatchRowView({ status: "SCHEDULED", spokeStopId: null, scheduledDate: midnight("2026-11-22") }, clock)
+      externalDispatchRowView(
+        { status: "SCHEDULED", spokeStopId: null, workflowStep: null, scheduledDate: midnight("2026-11-22") },
+        clock
+      )
     ).toMatchObject({ needsAttention: true, statusNote: expect.stringMatching(/^Missed the 6 AM send/) });
+  });
+
+  it.each(["CANCEL_CLEANUP_FAILED", "CANCELLED_BUT_ACTIVE"])(
+    "flags a cancelled order Anchor may still have (%s) and says to remove it in Spoke",
+    (workflowStep) => {
+      expect(
+        externalDispatchRowView(
+          { status: "CANCELLED", spokeStopId: "unassignedStops/u1", workflowStep, scheduledDate: midnight("2026-11-22") },
+          clock
+        )
+      ).toEqual({
+        canCancelExternal: false,
+        hasAnchorStop: true,
+        statusLabel: "CANCELLED",
+        statusNote: "Cancelled here, but Anchor may still have it. Remove it in Spoke.",
+        needsAttention: true,
+      });
+    }
+  );
+
+  it("leaves a cleanly cancelled order plain", () => {
+    for (const workflowStep of ["CANCEL_UNASSIGNED_STOP", null]) {
+      expect(
+        externalDispatchRowView(
+          { status: "CANCELLED", spokeStopId: null, workflowStep, scheduledDate: midnight("2026-11-22") },
+          clock
+        )
+      ).toMatchObject({ statusLabel: "CANCELLED", statusNote: null, needsAttention: false });
+    }
+  });
+
+  it("says a failed send whose stop reached Anchor needs Retry to finish", () => {
+    expect(
+      externalDispatchRowView(
+        { status: "DISPATCH_FAILED", spokeStopId: "unassignedStops/u1", workflowStep: "SPOKE_REQUEST", scheduledDate: midnight("2026-11-22") },
+        clock
+      )
+    ).toEqual({
+      canCancelExternal: true,
+      hasAnchorStop: true,
+      statusLabel: "DISPATCH FAILED",
+      statusNote: "Reached Anchor, but wasn't finished here. Press Retry to finish it.",
+      needsAttention: false,
+    });
+    expect(
+      externalDispatchRowView(
+        { status: "DISPATCH_FAILED", spokeStopId: null, workflowStep: "SPOKE_REQUEST", scheduledDate: midnight("2026-11-22") },
+        clock
+      )
+    ).toMatchObject({ hasAnchorStop: false, statusNote: "Didn't reach Anchor. Press Retry to send it again." });
   });
 });
 
@@ -286,6 +350,12 @@ describe("cancelConfirmMessage", () => {
     const message = cancelConfirmMessage("DISPATCH_FAILED");
     expect(message).toMatch(/^Cancel this order\? Sending it to Anchor failed/);
     expect(message).toContain("check Anchor's list in Spoke");
+  });
+
+  it("says a failed send whose stop reached Anchor is removed from Anchor's list", () => {
+    expect(cancelConfirmMessage("DISPATCH_FAILED", true)).toBe(
+      "Cancel this order? It reached Anchor but wasn't finished here, so cancelling removes it from Anchor's list."
+    );
   });
 
   it("removes anything else from Anchor's unassigned list", () => {
