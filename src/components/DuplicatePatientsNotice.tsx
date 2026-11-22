@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import { useConfirm } from "@/components/ui/DialogsProvider";
 import { cn } from "@/lib/portalStyles";
 import { BANNER_CLASSES } from "@/lib/statusTheme";
@@ -99,7 +100,7 @@ export function DuplicatePatientsNotice({ storeSlug, patientId, onMerged }: Prop
   const merge = async (duplicate: Duplicate) => {
     const deliveries = duplicate.orderCount + duplicate.dispatchCount;
     const phoneWarning = duplicate.phoneConflict
-      ? "\n\n⚠ The phone numbers are different — make sure this is the same person."
+      ? "\n\nThe phone numbers differ. Verify these records belong to the same patient."
       : "";
     // Say which address stays the default: staff can pick either record first,
     // so the merge direction must never be a surprise.
@@ -154,9 +155,12 @@ export function DuplicatePatientsNotice({ storeSlug, patientId, onMerged }: Prop
               ` ${mergedAddress} is now a saved address on this patient. If that's where they live now, click “Make default” under Manage saved addresses; if it's an old address, delete it there.`}
           </p>
           {result.recurringNotAtCurrentAddress.map((profile) => (
-            <p key={profile.id} className="font-semibold text-navy">
-              ⚠ A recurring profile ({profile.days}) still delivers to {profile.deliveryAddress},{" "}
-              {profile.deliveryCity}. If they&apos;ve moved, update it on the Recurring page.
+            <p key={profile.id} className="flex items-start gap-2 font-semibold text-navy">
+              <TriangleAlert size={16} strokeWidth={1.8} className="mt-0.5 shrink-0" aria-hidden="true" />
+              <span>
+                A recurring profile ({profile.days}) still delivers to {profile.deliveryAddress},{" "}
+                {profile.deliveryCity}. If they&apos;ve moved, update it on the Recurring page.
+              </span>
             </p>
           ))}
           {result.activeRecurringProfiles > 1 && (

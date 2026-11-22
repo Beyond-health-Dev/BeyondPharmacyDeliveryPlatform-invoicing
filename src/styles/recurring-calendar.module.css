@@ -1,0 +1,360 @@
+.calendar {
+  --day-line: var(--workspace-border, var(--hairline));
+  --calendar-ink: var(--workspace-ink, var(--navy-deep));
+  --calendar-muted: var(--workspace-muted, var(--muted));
+  --calendar-inset: clamp(.75rem, 1.5vw, 1.125rem);
+  overflow: clip;
+  color: var(--calendar-ink);
+}
+
+.header,
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: var(--calendar-inset);
+  border-bottom: 1px solid var(--day-line);
+}
+
+.header {
+  gap: .65rem 1rem;
+  padding-block: .875rem;
+}
+
+.weekRange {
+  margin-top: .125rem;
+  color: var(--calendar-muted);
+  font-size: .875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.navigation {
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--day-line);
+  border-radius: var(--r-button, .5rem);
+}
+
+.weekButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .25rem;
+  min-width: 2.375rem;
+  min-height: 2.125rem;
+  padding-inline: .65rem;
+  color: var(--calendar-ink);
+  font-size: .8125rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.weekButton + .weekButton {
+  border-inline-start: 1px solid var(--day-line);
+}
+
+.toolbar {
+  gap: .5rem 1rem;
+  min-height: 3.35rem;
+  padding-block: .5rem;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .375rem;
+  min-width: 0;
+}
+
+.filter {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: .35rem;
+  min-width: 0;
+  padding-inline: .6rem;
+  border: 1px solid var(--day-line);
+  border-radius: .5rem;
+  color: var(--calendar-muted);
+  font-size: .8125rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.weekButton,
+.filter,
+.entry {
+  transition: background-color var(--hover-ms) ease, border-color var(--hover-ms) ease;
+}
+
+.weekButton:hover,
+.filter:hover {
+  background-color: var(--workspace-surface, var(--blue));
+  color: var(--calendar-ink);
+}
+
+.filter[aria-pressed="true"] {
+  border-color: var(--border-control-hover);
+  background-color: var(--workspace-accent-soft, var(--blue));
+  color: var(--calendar-ink);
+}
+
+.filterCount,
+.dayCount {
+  display: grid;
+  min-width: 1.25rem;
+  min-height: 1.25rem;
+  place-items: center;
+  padding-inline: .25rem;
+  border-radius: .35rem;
+  background-color: var(--placeholder-fill);
+  font-size: .6875rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.total,
+.emptyDay {
+  color: var(--calendar-muted);
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.total:empty {
+  display: none;
+}
+
+.loadError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem 1rem;
+  padding: .625rem var(--calendar-inset);
+  font-size: .875rem;
+}
+
+.week {
+  /* Holds the days' absolutely placed screen-reader text, which otherwise
+     escapes the scroller and widens the page on a phone. */
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(5.5rem, 1fr));
+  min-height: 13rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  list-style: none;
+}
+
+.day {
+  min-width: 0;
+  background-color: var(--white);
+}
+
+.day + .day {
+  box-shadow: inset 1px 0 var(--day-line);
+}
+
+.day[data-today] {
+  background-color: var(--workspace-accent-soft, var(--blue));
+}
+
+.weekday {
+  display: flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: .3rem;
+  background-color: var(--navy);
+  color: var(--white);
+  font-size: .71875rem;
+  font-weight: 750;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.today {
+  padding: .1rem .3rem;
+  border-radius: .3rem;
+  background-color: var(--blue);
+  color: var(--navy-deep);
+  font-size: .625rem;
+  font-weight: 750;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.dateRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .25rem;
+  min-height: 2.375rem;
+  padding: .33rem .55rem;
+  font-size: .8125rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.entries {
+  display: grid;
+  gap: .35rem;
+  padding: 0 .32rem .7rem;
+  list-style: none;
+}
+
+.emptyDay {
+  padding: .15rem .55rem .7rem;
+  font-size: .75rem;
+}
+
+.entry {
+  display: grid;
+  gap: .16rem;
+  width: 100%;
+  min-height: 1.875rem;
+  align-content: center;
+  padding: .33rem .35rem;
+  border-inline-start: 2px solid color-mix(in srgb, var(--navy) 28%, var(--blue));
+  border-radius: .46rem;
+  background-color: color-mix(in srgb, var(--blue) 36%, var(--white));
+  color: var(--calendar-ink);
+  line-height: 1.26;
+  overflow-wrap: anywhere;
+  text-align: start;
+  cursor: pointer;
+}
+
+.entry:hover {
+  background-color: color-mix(in srgb, var(--blue) 68%, var(--white));
+}
+
+.entry[data-held] {
+  border-inline-start-color: color-mix(in srgb, var(--danger) 40%, var(--blush));
+  background-color: color-mix(in srgb, var(--blush) 56%, var(--white));
+}
+
+.entry[data-held]:hover {
+  background-color: var(--blush);
+}
+
+.weekButton:focus-visible,
+.filter:focus-visible,
+.week:focus-visible,
+.entry:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: -2px;
+}
+
+.patient {
+  font-size: .8125rem;
+  font-weight: 750;
+}
+
+.hold {
+  color: var(--danger);
+  font-size: .6875rem;
+  font-weight: 700;
+}
+
+.holdsDock {
+  --dock-inset: clamp(1rem, 2vw, 1.75rem);
+  position: fixed;
+  z-index: 20;
+  inset: auto var(--dock-inset) var(--dock-inset) auto;
+  color: var(--calendar-ink);
+}
+
+.holdsTab {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  min-height: 2.75rem;
+  padding: .4rem .8rem;
+  border: 1px solid var(--border-control-hover);
+  border-radius: .8rem;
+  background: var(--white);
+  box-shadow: 0 3px 12px rgb(24 41 73 / 12%);
+  font-size: .875rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.holdsTab[data-active] > svg:first-child { color: #9c404a; }
+.holdsTab:hover, .holdsClose:hover { background-color: var(--workspace-surface, var(--blue)); }
+.holdsChevron { color: var(--calendar-muted); }
+.holdsDock:has(:popover-open) .holdsChevron { transform: rotate(180deg); }
+.holdsTab[aria-expanded="true"] .holdsChevron { transform: rotate(180deg); }
+.holdsBadge {
+  min-width: 1.4rem;
+  padding: .12rem .35rem;
+  border-radius: .4rem;
+  background: var(--placeholder-fill);
+  font-size: .75rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.holdsTab[data-active] .holdsBadge { background: var(--blush); color: #83323b; }
+
+/* Hidden unless open. A browser without popovers drops every rule with
+   :popover-open in it, so the panel it shows (data-open) has rules of its own. */
+.holdsPanel {
+  display: none;
+  position: fixed;
+  inset: auto var(--dock-inset) calc(var(--dock-inset) + 3.2rem) auto;
+  margin: 0;
+  padding: 0;
+  width: min(23rem, calc(100vw - 2 * var(--dock-inset)));
+  max-height: min(31rem, calc(100dvh - 6.5rem));
+  overflow: hidden;
+  border: 1px solid var(--day-line);
+  border-radius: .9rem;
+  background: var(--white);
+  color: var(--calendar-ink);
+  box-shadow: 0 8px 24px rgb(24 41 73 / 14%);
+}
+.holdsPanel:popover-open { display: flex; flex-direction: column; }
+.holdsPanel[data-open] { display: flex; flex-direction: column; }
+.holdsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: .9rem .9rem .8rem 1.1rem;
+  border-bottom: 1px solid var(--day-line);
+}
+.holdsHeader h3 { font-weight: 750; font-size: 1.06rem; }
+.holdsHeader p, .holdsAddress, .holdDetail p:first-child {
+  color: var(--calendar-muted);
+  font-size: .765625rem;
+}
+.holdsHeader p { margin-top: .16rem; }
+.holdsClose { position: relative; display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .4rem; cursor: pointer; }
+/* A 44px tap area; the header's padding leaves room for it. */
+.holdsClose::after { position: absolute; inset: -6px; content: ""; }
+.holdsBody { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.holdPatients { padding-inline: 1.1rem; list-style: none; }
+.holdPatients > li { padding-block: .75rem; overflow-wrap: anywhere; }
+.holdPatients > li + li { border-top: 1px solid var(--day-line); }
+.holdPatients h4 { font-weight: 750; font-size: .9rem; }
+.holdDetail { margin-top: .27rem; }
+.holdDetail + .holdDetail { margin-top: .55rem; }
+.holdDetail p + p { margin-top: .1rem; white-space: pre-line; font-size: .865rem; line-height: 1.4; }
+.holdsMessage { padding: 1.05rem; color: var(--calendar-muted); font-size: .875rem; }
+.holdsMessage button { color: var(--calendar-ink); text-decoration: underline; cursor: pointer; }
+.holdsMessage button[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
+.holdsDock :focus-visible { outline: 2px solid var(--navy); outline-offset: -2px; }
+@media print {
+  .holdsDock { display: none; }
+  .holdsPanel:popover-open { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .weekButton,
+  .filter,
+  .entry {
+    transition: none;
+  }
+}

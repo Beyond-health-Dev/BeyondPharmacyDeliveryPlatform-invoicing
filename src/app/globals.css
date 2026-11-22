@@ -1,5 +1,6 @@
 /* Design tokens first — before Tailwind's base styles. */
 @import "../styles/theme.css";
+@import "../styles/workspace.css";
 @import "tailwindcss";
 
 /*
@@ -249,7 +250,12 @@
     background: var(--white);
     color: var(--navy);
     font-family: var(--font-sans);
+    font-style: normal;
     -webkit-tap-highlight-color: transparent;
+  }
+
+  :where(em, i, address) {
+    font-style: normal;
   }
 
   /* Outlines are navy before focus too, so transitions on a control can't

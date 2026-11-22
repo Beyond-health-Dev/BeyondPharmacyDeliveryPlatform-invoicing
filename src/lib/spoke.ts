@@ -11,6 +11,16 @@ const DEFAULT_MAX_ATTEMPTS = 4;
 const RETRY_BASE_DELAY_MS = 500;
 const RETRY_MAX_DELAY_MS = 8000;
 
+export function getSpokeTrackingUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export class SpokeDispatchError extends Error {
   statusCode: number;
   responsePayload: unknown;

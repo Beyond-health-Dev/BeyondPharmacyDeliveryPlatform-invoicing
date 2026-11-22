@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import PharmacyNav from "@/components/PharmacyNav";
+import PharmacyShell from "@/components/PharmacyShell";
 import ConfirmModal from "@/components/ConfirmModal";
 import { DriverSelect } from "@/components/DriverSelect";
 import Circles from "@/components/ui/Circles";
@@ -27,8 +27,6 @@ import {
   mutedText,
   pageTitle,
   panel,
-  portalMain,
-  portalShell,
   primaryButton,
   primaryButtonFull,
   secondaryButton,
@@ -86,9 +84,8 @@ export default function StyleGuide() {
 
   return (
     <DevFrame>
-      <div className={portalShell}>
-        <PharmacyNav storeSlug={DEV_STORE.slug} storeName={DEV_STORE.name} basePath="/dev" />
-        <main className={`${portalMain} space-y-10`}>
+      <PharmacyShell storeSlug={DEV_STORE.slug} storeName={DEV_STORE.name} navBasePath="/dev">
+        <div className="space-y-10">
           <PageHeader>
             <span className={cn(eyebrow, "drop-in mb-4")}>Design system</span>
             <h1 className={pageTitle}>
@@ -419,8 +416,8 @@ export default function StyleGuide() {
               ))}
             </div>
           </Section>
-        </main>
-      </div>
+        </div>
+      </PharmacyShell>
     </DevFrame>
   );
 }

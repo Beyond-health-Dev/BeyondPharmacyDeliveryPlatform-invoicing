@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import PharmacyShell from "@/components/PharmacyShell";
 import DriverShell from "@/components/DriverShell";
 import StorePickerView from "@/components/StorePickerView";
 import DashboardView from "@/app/(pharmacy)/[store]/dashboard/DashboardView";
-import OrdersView from "@/app/(pharmacy)/[store]/orders/OrdersView";
+import OrdersView, { ORDER_STATUS_FILTERS } from "@/app/(pharmacy)/[store]/orders/OrdersView";
 import NewOrderView from "@/app/(pharmacy)/[store]/orders/new/NewOrderView";
-import RecurringView from "@/app/(pharmacy)/[store]/recurring/RecurringView";
+import DevRecurringView from "../_DevRecurringView";
 import RemindersView from "@/app/(pharmacy)/[store]/reminders/RemindersView";
 import PricingView from "@/app/(pharmacy)/[store]/pricing/PricingView";
 import InvoicesView from "@/app/(pharmacy)/[store]/invoices/InvoicesView";
@@ -15,6 +16,9 @@ import DeliveryDetailView from "@/app/(driver)/[store]/deliver/[id]/DeliveryDeta
 import EarningsView from "@/app/(driver)/[store]/earnings/EarningsView";
 import DevFrame from "../_DevFrame";
 import { deliveryDateDefault, vancouverWeekStartKey } from "@/lib/vancouverDate";
+import { card, pageTitle, textLink } from "@/lib/portalStyles";
+import { ANCHOR_ORDER_FILTERS, NOT_CONFIRMED_FILTER, WAITING_FILTER } from "@/lib/orderFilters";
+import { FAILED_EXTERNAL_STATUSES, UNCONFIRMED_EXTERNAL_STATUSES } from "@/lib/externalDispatchStatus";
 import * as fx from "../_fixtures";
 
 function Pharmacy({ children }: { children: React.ReactNode }) {
@@ -37,15 +41,20 @@ const slug = fx.DEV_SLUG;
 
 export default async function DevScreen({
   params,
+  searchParams,
 }: {
   params: Promise<{ screen: string[] }>;
+  searchParams: Promise<{ search?: string | string[]; status?: string | string[] }>;
 }) {
-  const { screen } = await params;
-  return <DevFrame>{renderScreen(screen.join("/"))}</DevFrame>;
+  const [{ screen }, query] = await Promise.all([params, searchParams]);
+  const search = typeof query.search === "string" ? query.search.trim() : "";
+  const status = typeof query.status === "string" && (ORDER_STATUS_FILTERS.includes(query.status) || ANCHOR_ORDER_FILTERS.some((filter) => filter.key === query.status))
+    ? query.status
+    : undefined;
+  return <DevFrame>{renderScreen(screen.join("/"), search, status)}</DevFrame>;
 }
 
-function renderScreen(path: string) {
-
+function renderScreen(path: string, search: string, status: string | undefined) {
   switch (path) {
     case "home":
       return <StorePickerView stores={fx.stores} />;
@@ -55,29 +64,62 @@ function renderScreen(path: string) {
         <Pharmacy>
           <DashboardView
             storeSlug={slug}
+            dayKey={fx.TODAY}
             deliveries={fx.dashboardDeliveries}
             heldForAnchorCount={fx.heldForAnchorCount}
           />
         </Pharmacy>
       );
-    case "orders":
+    case "spoke-tracking/x1": {
+      const sample = fx.dashboardDeliveries.find((delivery) => delivery.trackingLink === `/dev/${path}`);
+      if (!sample) notFound();
+      return (
+        <Pharmacy>
+          <section className={`${card} max-w-xl space-y-4 p-6`}>
+            <h1 className={pageTitle}>Spoke tracking preview</h1>
+            <p className="font-semibold text-navy">{sample.patientName} · {sample.deliveryCity}</p>
+            <p className="text-sm text-muted">
+              This sample delivery shows where tracking opens. Live deliveries open the tracking page supplied by Spoke.
+            </p>
+            <Link href="/dev/dashboard" className={textLink}>Back to dashboard</Link>
+          </section>
+        </Pharmacy>
+      );
+    }
+    case "orders": {
+      const searchTerm = search.toLowerCase();
+      const groupedOrders = Object.fromEntries(
+        Object.entries(fx.groupedOrders).map(([dateKey, orders]) => [
+          dateKey,
+          orders.filter((order) =>
+            (!status || order.status === status || (order.isExternal && (
+              (status === "FAILED" && FAILED_EXTERNAL_STATUSES.includes(order.status)) ||
+              (status === WAITING_FILTER && order.status === "SCHEDULED") ||
+              (status === NOT_CONFIRMED_FILTER && dateKey < fx.TODAY && UNCONFIRMED_EXTERNAL_STATUSES.includes(order.status))
+            ))) &&
+            order.patientName.toLowerCase().includes(searchTerm)
+          ),
+        ])
+      );
+      const sortedDateKeys = fx.sortedDateKeys.filter((dateKey) => groupedOrders[dateKey].length > 0);
+      const orderCount = Object.values(groupedOrders).reduce((total, orders) => total + orders.length, 0);
       return (
         <Pharmacy>
           <OrdersView
             storeSlug={slug}
-            status={undefined}
-            search=""
+            status={status}
+            search={search}
             limit={100}
             total={fx.orderCount}
-            orderCount={fx.orderCount}
-            groupedOrders={fx.groupedOrders}
-            sortedDateKeys={fx.sortedDateKeys}
-            // As the page does: Assign Driver never offers Anchor.
-            drivers={fx.drivers.filter((d) => !d.isExternal)}
+            orderCount={orderCount}
+            groupedOrders={groupedOrders}
+            sortedDateKeys={sortedDateKeys}
+            drivers={fx.drivers.filter((driver) => !driver.isExternal)}
             poll={false}
           />
         </Pharmacy>
       );
+    }
     case "orders/new":
       return (
         <Pharmacy>
@@ -111,14 +153,14 @@ function renderScreen(path: string) {
     case "recurring/labels":
       return (
         <Pharmacy>
-          <RecurringView
+          <DevRecurringView
             storeSlug={slug}
             weekStartKey={vancouverWeekStartKey()}
+            todayKey={fx.TODAY}
             zones={fx.activeZones}
             drivers={fx.drivers}
             zoneHistory={fx.zoneHistory}
             fallbackZoneId="z_surrey"
-            orders={fx.recurringOrders}
             defaultRearrangeOpen={path === "recurring/labels"}
           />
         </Pharmacy>

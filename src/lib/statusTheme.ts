@@ -85,7 +85,7 @@ export const BANNER_CLASSES = {
   info: "bg-blue text-navy",
 } as const;
 
-// Store notifications: which badge status and marker each kind uses.
+// Store notifications use the same semantic markers as toasts.
 const FAILURE_NOTIFICATIONS = new Set([
   "DELIVERY_FAILED",
   "SPOKE_DISPATCH_FAILED",
@@ -112,16 +112,8 @@ export function notificationTitle(type: string) {
   return NOTIFICATION_TITLES[type] ?? "Notice";
 }
 
-// `unread` is the row fill while a notification is still new.
-export function notificationStyle(type: string): { badge: string; marker: string; unread: string } {
-  if (FAILURE_NOTIFICATIONS.has(type)) {
-    return { badge: statusBadgeClasses("FAILED"), marker: MARKER_CLASSES.error, unread: "bg-blush" };
-  }
-  if (type === "ORDER_PICKED_UP") {
-    return { badge: statusBadgeClasses("PICKED_UP"), marker: MARKER_CLASSES.success, unread: "bg-mint" };
-  }
-  if (type === "BATCH_DELIVERED") {
-    return { badge: statusBadgeClasses("DELIVERED"), marker: MARKER_CLASSES.success, unread: "bg-mint" };
-  }
-  return { badge: statusBadgeClasses("IN_TRANSIT"), marker: MARKER_CLASSES.info, unread: "bg-blue" };
+export function notificationMarker(type: string) {
+  if (FAILURE_NOTIFICATIONS.has(type)) return MARKER_CLASSES.error;
+  if (type === "ORDER_PICKED_UP" || type === "BATCH_DELIVERED") return MARKER_CLASSES.success;
+  return MARKER_CLASSES.info;
 }

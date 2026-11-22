@@ -8,6 +8,7 @@ import {
 } from "@/lib/externalDispatchStatus";
 import {
   canAdvanceDispatchStatus,
+  getSpokeTrackingUrl,
   mapSpokeWebhookStatus,
   verifySpokeSignature,
 } from "@/lib/spoke";
@@ -35,11 +36,6 @@ function readStopId(eventType: string, data: Record<string, unknown>) {
   if (eventType === "test.send_event") return null;
   const directId = data.id;
   return typeof directId === "string" && directId.trim() ? directId.trim() : null;
-}
-
-function readTrackingLink(data: Record<string, unknown>) {
-  const value = data.trackingLink;
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function readSellerOrderId(data: Record<string, unknown>) {
@@ -205,7 +201,7 @@ export async function POST(req: NextRequest) {
           : {}),
         lastWebhookEventType: eventType,
         webhookPayload: asPrismaJson(eventPayload),
-        trackingLink: readTrackingLink(data),
+        trackingLink: getSpokeTrackingUrl(data.trackingLink) ?? undefined,
         spokeStopId: stopId,
         externalReference: stopId,
       },

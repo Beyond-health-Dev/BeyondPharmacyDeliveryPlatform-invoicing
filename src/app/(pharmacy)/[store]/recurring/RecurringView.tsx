@@ -1,16 +1,20 @@
-import type { ComponentProps } from "react";
+"use client";
+
+import { useReducer, type ComponentProps } from "react";
+import { Plus } from "lucide-react";
 import RecurringCalendar from "./RecurringCalendar";
 import RecurringLabelSheets from "./RecurringLabelSheets";
 import RecurringOrderForm from "./RecurringOrderForm";
 import RecurringOrderList from "./RecurringOrderList";
 import PageHeader from "@/components/ui/PageHeader";
-import { pageTitle } from "@/lib/portalStyles";
+import { cn, pageTitle, primaryButton } from "@/lib/portalStyles";
 
 // Presentational screen; the page supplies the data. Kept separate so the
 // dev-only style guide can render it from fixtures.
 export default function RecurringView({
   storeSlug,
   weekStartKey,
+  todayKey,
   zones,
   drivers,
   zoneHistory,
@@ -21,6 +25,7 @@ export default function RecurringView({
   storeSlug: string;
   // This week's Sunday in Vancouver (YYYY-MM-DD), worked out on the server.
   weekStartKey: string;
+  todayKey: string;
   zones: ComponentProps<typeof RecurringOrderList>["zones"];
   drivers: ComponentProps<typeof RecurringOrderList>["drivers"];
   zoneHistory: ComponentProps<typeof RecurringOrderList>["zoneHistory"];
@@ -29,16 +34,37 @@ export default function RecurringView({
   // Opens the label card's Rearrange panel on load (the style guide's screen).
   defaultRearrangeOpen?: boolean;
 }) {
+  const [calendarRevision, refreshCalendar] = useReducer((version: number) => version + 1, 0);
   return (
-    <div>
-      <PageHeader className="mb-8">
-        <h1 className={pageTitle}>
-          Recurring Deliveries, simplified
-        </h1>
+    <div className="space-y-5 pb-16">
+      <PageHeader className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3">
+        <h1 className={pageTitle}>Recurring deliveries</h1>
+        <a
+          href="#new-recurring-profile"
+          className={cn(primaryButton, "inline-flex min-h-11 items-center gap-2")}
+        >
+          <Plus size={17} aria-hidden="true" />
+          New recurring profile
+        </a>
       </PageHeader>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(17rem,1fr)_minmax(0,2.3fr)] xl:grid-rows-[max-content_1fr]">
+        <div className="min-w-0 xl:col-start-2 xl:row-start-1">
+          <RecurringCalendar
+            storeSlug={storeSlug}
+            drivers={drivers}
+            initialWeekStartKey={weekStartKey}
+            todayKey={todayKey}
+            revision={calendarRevision}
+            refreshCalendar={refreshCalendar}
+          />
+        </div>
+        <div
+          id="new-recurring-profile"
+          tabIndex={-1}
+          className="min-w-0 scroll-mt-20 xl:col-start-1 xl:row-span-2 xl:row-start-1"
+        >
           <RecurringOrderForm
+            onScheduleChange={refreshCalendar}
             storeSlug={storeSlug}
             zones={zones}
             drivers={drivers}
@@ -46,8 +72,7 @@ export default function RecurringView({
             fallbackZoneId={fallbackZoneId}
           />
         </div>
-        <div className="space-y-6 lg:col-span-2">
-          <RecurringCalendar storeSlug={storeSlug} drivers={drivers} initialWeekStartKey={weekStartKey} />
+        <div className="min-w-0 space-y-5 xl:col-start-2 xl:row-start-2">
           <div data-reveal="">
             <RecurringLabelSheets
               storeSlug={storeSlug}
@@ -57,6 +82,7 @@ export default function RecurringView({
           </div>
           <div data-reveal="">
             <RecurringOrderList
+              onScheduleChange={refreshCalendar}
               storeSlug={storeSlug}
               drivers={drivers}
               zones={zones}

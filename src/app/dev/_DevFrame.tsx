@@ -10,6 +10,9 @@ export default function DevFrame({ children }: { children: React.ReactNode }) {
   if (process.env.NODE_ENV === "production") notFound();
   return (
     <>
+      {process.env.DELIVERY_UI_PREVIEW === "1" && (
+        <style>{"nextjs-portal { display: none !important; }"}</style>
+      )}
       <DevFetchStub />
       {children}
     </>

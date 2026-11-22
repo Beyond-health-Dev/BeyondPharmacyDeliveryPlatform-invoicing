@@ -64,10 +64,12 @@ const nextConfig: NextConfig = {
 // contain the route at all. "ts"/"tsx" stay in both lists because this
 // setting also governs proxy.ts and instrumentation.ts.
 export default function config(phase: string): NextConfig {
+  const isDevelopment = phase === PHASE_DEVELOPMENT_SERVER;
   return {
     ...nextConfig,
+    ...(isDevelopment && process.env.DELIVERY_UI_PREVIEW === "1" ? { devIndicators: false } : {}),
     pageExtensions:
-      phase === PHASE_DEVELOPMENT_SERVER
+      isDevelopment
         ? ["dev.tsx", "tsx", "ts", "jsx", "js"]
         : ["tsx", "ts", "jsx", "js"],
   };

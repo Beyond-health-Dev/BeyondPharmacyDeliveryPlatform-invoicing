@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireStoreAdmin } from "@/lib/storeAccess";
 import { prisma } from "@/lib/db";
 import { isRecurringScheduleDue } from "@/lib/cron";
-import {
-  findRecurringSkipForDate,
-  isVacationHoldActive,
-  recurringSkipScope,
-} from "@/lib/recurringHolds";
+import { isVacationHoldActive, sameUtcDay } from "@/lib/recurringHolds";
+import { holdsForCalendarDate } from "@/lib/weeklyHolds";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -58,28 +55,14 @@ function parseActiveDays(value: string) {
   return null;
 }
 
-function sameUtcDay(a: Date, b: Date) {
-  return (
-    a.getUTCFullYear() === b.getUTCFullYear() &&
-    a.getUTCMonth() === b.getUTCMonth() &&
-    a.getUTCDate() === b.getUTCDate()
-  );
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ store: string }> }
 ) {
   const { store: storeSlug } = await params;
-  const store = await resolveStore(storeSlug);
-  if (!store) {
-    return NextResponse.json({ error: "Store not found" }, { status: 404 });
-  }
-
-  const session = await auth();
-  if (!session?.user || session.user.role !== "PHARMACY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = await requireStoreAdmin(await resolveStore(storeSlug));
+  if (access.error) return access.error;
+  const { store } = access;
 
   const start = parseDateParam(req.nextUrl.searchParams.get("start"));
   const end = parseDateParam(req.nextUrl.searchParams.get("end"));
@@ -119,11 +102,16 @@ export async function GET(
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
-  const instances = [];
-  // De-dup identical recurring profiles per calendar day. Bucketed by date so the
-  // fuzzy match only runs against same-day candidates instead of every instance seen.
-  const seenByDate = new Map<string, RecurringPersonInput[]>();
-
+  // Every scheduled delivery in the range, oldest profile first, as the order
+  // generator walks them.
+  const candidates: Array<{
+    recurring: (typeof recurringOrders)[number];
+    day: Date;
+    weekStart: Date;
+    instanceDate: string;
+    onVacation: boolean;
+    person: RecurringPersonInput;
+  }> = [];
   for (const recurring of recurringOrders) {
     const activeDays = parseActiveDays(recurring.activeDays);
     if (!activeDays) continue;
@@ -134,35 +122,62 @@ export async function GET(
       const weekStart = utcWeekStart(day);
       if (!isRecurringScheduleDue(recurring, { weekStart })) continue;
 
-      const skip = findRecurringSkipForDate(recurring.skips, { dayStart: day, weekStart });
-      const templateHold = isVacationHoldActive(recurring, day);
-      const order = recurring.orders.find((candidate) =>
-        sameUtcDay(candidate.scheduledDate, day)
-      );
-      const instanceDate = dateKey(day);
-      const person = {
-        patientId: recurring.patientId,
-        patientName: recurring.patientName,
-        patientPhone: recurring.patientPhone,
-        deliveryAddress: recurring.deliveryAddress,
-        deliveryCity: recurring.deliveryCity,
-        deliveryPostalCode: recurring.deliveryPostalCode,
-      };
+      candidates.push({
+        recurring,
+        day,
+        weekStart,
+        instanceDate: dateKey(day),
+        onVacation: isVacationHoldActive(recurring, day),
+        person: {
+          patientId: recurring.patientId,
+          patientName: recurring.patientName,
+          patientPhone: recurring.patientPhone,
+          deliveryAddress: recurring.deliveryAddress,
+          deliveryCity: recurring.deliveryCity,
+          deliveryPostalCode: recurring.deliveryPostalCode,
+        },
+      });
+    }
+  }
 
-      const seenForDate = seenByDate.get(instanceDate);
-      if (seenForDate?.some((seen) => recurringPeopleMatch(seen, person))) {
+  // De-dup identical recurring profiles per calendar day the way the order
+  // generator does. It drops profiles on vacation first, so a newer profile
+  // for the same patient still delivers; a vacation is shown only when no
+  // other profile delivers to that patient that day. It checks day and week
+  // skips after de-duping, so a skipped profile still stands in for its
+  // duplicates. Bucketed by date so the fuzzy match only runs against same-day
+  // candidates instead of every instance seen.
+  const seenByDate = new Map<string, RecurringPersonInput[]>();
+  const shown = new Set<(typeof candidates)[number]>();
+  for (const vacationPass of [false, true]) {
+    for (const candidate of candidates) {
+      if (candidate.onVacation !== vacationPass) continue;
+      const seenForDate = seenByDate.get(candidate.instanceDate);
+      if (seenForDate?.some((seen) => recurringPeopleMatch(seen, candidate.person))) {
         continue;
       }
       if (seenForDate) {
-        seenForDate.push(person);
+        seenForDate.push(candidate.person);
       } else {
-        seenByDate.set(instanceDate, [person]);
+        seenByDate.set(candidate.instanceDate, [candidate.person]);
       }
+      shown.add(candidate);
+    }
+  }
 
-      instances.push({
+  const instances = candidates
+    .filter((candidate) => shown.has(candidate))
+    .map(({ recurring, day, weekStart, instanceDate }) => {
+      const holdDetails = holdsForCalendarDate(recurring.skips, recurring, day, weekStart);
+      const hold = holdDetails[0];
+      const order = recurring.orders.find((candidate) =>
+        sameUtcDay(candidate.scheduledDate, day)
+      );
+      return {
         id: `${recurring.id}:${instanceDate}`,
         recurringOrderId: recurring.id,
         date: instanceDate,
+        patientId: recurring.patientId,
         patientName: recurring.patientName,
         deliveryAddress: recurring.deliveryAddress,
         deliveryCity: recurring.deliveryCity,
@@ -171,27 +186,19 @@ export async function GET(
         assignedDriverName: recurring.assignedDriver?.name ?? null,
         assignedDriverId: recurring.assignedDriverId,
         recurrenceIntervalWeeks: recurring.recurrenceIntervalWeeks,
-        isHeld: !!skip || templateHold,
-        // WEEK: Skip This Week from the profile list; INSTANCE: a one-day
-        // hold; TEMPLATE: the profile's vacation hold.
-        holdType: skip
-          ? recurringSkipScope(skip) === "WEEK"
-            ? "WEEK"
-            : "INSTANCE"
-          : templateHold
-            ? "TEMPLATE"
-            : null,
-        skipDate: skip ? dateKey(skip.skipDate) : null,
-        holdReason: skip?.reason ?? null,
+        isHeld: !!hold,
+        holdType: hold?.type ?? null,
+        skipDate: hold?.type === "WEEK" ? dateKey(weekStart) : hold?.type === "INSTANCE" ? instanceDate : null,
+        holdReason: hold?.reason ?? null,
+        holdDetails,
         generatedOrderId: order?.id ?? null,
         generatedOrderStatus: order?.status ?? null,
-      });
-    }
-  }
+      };
+    });
 
   return NextResponse.json({
     start: dateKey(start),
     end: dateKey(end),
     instances,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

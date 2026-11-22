@@ -17,7 +17,7 @@ export default function UsersView({
     <div>
       <PageHeader className="mb-8">
         <h1 className={pageTitle}>
-          User Management, clear
+          Users
         </h1>
       </PageHeader>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -10,7 +10,7 @@ export default function NewOrderView(props: ComponentProps<typeof NewOrderForm>)
     <div>
       <PageHeader className="mb-8">
         <h1 className={pageTitle}>
-          Create New Order
+          New order
         </h1>
       </PageHeader>
       <NewOrderForm {...props} />

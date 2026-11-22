@@ -90,8 +90,10 @@ export default async function RecurringPage({
 
   return (
     <RecurringView
+      key={storeSlug}
       storeSlug={storeSlug}
       weekStartKey={thisWeek.startKey}
+      todayKey={vancouverTodayKey()}
       zones={zoneOptions}
       drivers={driverOptions}
       zoneHistory={zoneHistory}

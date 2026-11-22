@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import DeliveryPoller from "./DeliveryPoller";
-import DateNavigation from "./DateNavigation";
+import DateNavigation from "./DeliveryDateNavigation";
 import DeliveryList from "./DeliveryList";
 import PageHeader from "@/components/ui/PageHeader";
 import { pageTitle } from "@/lib/portalStyles";

@@ -379,7 +379,7 @@ function AddressSelectInner({
       )}
       {showPicker && (
         <div>
-          <label htmlFor={`${fieldId}-saved`} className={label}>Saved Address</label>
+          <label htmlFor={`${fieldId}-saved`} className={label}>Saved address</label>
           <select
             id={`${fieldId}-saved`}
             value={value.addressId ?? NEW_ADDRESS}
@@ -409,7 +409,7 @@ function AddressSelectInner({
       )}
 
       <div>
-        <label htmlFor={`${fieldId}-address`} className={label}>Delivery Address *</label>
+        <label htmlFor={`${fieldId}-address`} className={label}>Delivery address *</label>
         <input
           id={`${fieldId}-address`}
           required
@@ -490,7 +490,7 @@ function AddressSelectInner({
           />
         </div>
         <div>
-          <label htmlFor={`${fieldId}-postal`} className={label}>Postal Code *</label>
+          <label htmlFor={`${fieldId}-postal`} className={label}>Postal code *</label>
           <input
             id={`${fieldId}-postal`}
             required
