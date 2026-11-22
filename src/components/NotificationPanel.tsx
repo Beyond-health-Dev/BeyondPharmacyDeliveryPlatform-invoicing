@@ -89,6 +89,8 @@ export default function NotificationPanel({ storeSlug }: { storeSlug: string }) 
                           ? "Spoke Dispatch Failed"
                           : n.type === "SPOKE_DISPATCH_STALLED"
                           ? "Spoke Delivery Stalled"
+                          : n.type === "SPOKE_CANCEL_INCOMPLETE"
+                          ? "Spoke Cancel Incomplete"
                           : n.type === "GENERATION_INCOMPLETE"
                           ? "Generation Incomplete"
                           : n.type === "ORDER_PICKED_UP"

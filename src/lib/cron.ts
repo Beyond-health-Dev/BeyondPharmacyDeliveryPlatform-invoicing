@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
+import { IN_FLIGHT_STEP, isHeldForRelease } from "./externalDispatchStatus";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -18,6 +19,9 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 // Stop the generation run before the platform's 60s function limit kills it
 // mid-loop (Spoke's 5 req/s write cap makes large dispatch batches slow).
 const GENERATION_TIME_BUDGET_MS = 50_000;
+// A release marked as sending more recently than this is still in progress
+// in another run; an older mark is a send that was cut short.
+const IN_FLIGHT_WINDOW_MS = 2 * 60 * 1000;
 
 let initialized = false;
 
@@ -670,8 +674,22 @@ export async function releaseDueSpokeDispatches(
 
   let released = 0;
   for (const dispatch of dueDispatches) {
+    // Re-read just before sending: the order may have been cancelled (or sent)
+    // since the list above was read, or another run may be sending it now.
+    const current = await prisma.externalDispatch.findUnique({
+      where: { id: dispatch.id },
+      select: { status: true, workflowStep: true, updatedAt: true },
+    });
+    if (!current || !isHeldForRelease(current.status)) continue;
+    if (
+      current.workflowStep === IN_FLIGHT_STEP &&
+      Date.now() - current.updatedAt.getTime() < IN_FLIGHT_WINDOW_MS
+    ) {
+      continue;
+    }
+
     try {
-      await dispatchOrderToSpoke({
+      const result = await dispatchOrderToSpoke({
         idempotencyKey: dispatch.idempotencyKey,
         patientId: dispatch.patientId,
         store: {
@@ -700,8 +718,12 @@ export async function releaseDueSpokeDispatches(
         scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
         createdById: dispatch.createdById,
       });
-      released++;
-      console.log(`[CRON] Released scheduled Spoke dispatch for ${dispatch.patientName}`);
+      if (result.alreadyDispatched) {
+        console.log(`[CRON] Scheduled Spoke dispatch for ${dispatch.patientName} was already sent or cancelled`);
+      } else {
+        released++;
+        console.log(`[CRON] Released scheduled Spoke dispatch for ${dispatch.patientName}`);
+      }
     } catch (err) {
       console.warn(
         `[CRON] Failed to release scheduled Spoke dispatch for ${dispatch.patientName}:`,
@@ -711,7 +733,7 @@ export async function releaseDueSpokeDispatches(
         await prisma.notification.create({
           data: {
             type: "SPOKE_DISPATCH_FAILED",
-            message: `Spoke dispatch failed for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) — the scheduled delivery was NOT sent to Spoke. Use "Generate Today's Orders" to retry.`,
+            message: `Spoke dispatch failed for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) — the scheduled delivery was NOT sent to Anchor. Open Orders and press Retry on it.`,
             storeId: dispatch.storeId,
           },
         });

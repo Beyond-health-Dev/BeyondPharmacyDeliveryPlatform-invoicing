@@ -107,7 +107,14 @@ export async function POST(req: NextRequest) {
           ...(sellerOrderId ? [{ idempotencyKey: sellerOrderId }] : []),
         ],
       },
-      select: { id: true, status: true },
+      select: {
+        id: true,
+        status: true,
+        storeId: true,
+        patientName: true,
+        deliveryAddress: true,
+        deliveryCity: true,
+      },
     });
 
     if (!dispatch) {
@@ -141,6 +148,26 @@ export async function POST(req: NextRequest) {
     });
 
     if (updated.count > 0) {
+      // Alert the store once, the same way an in-house failed delivery does.
+      // A replay of the same event finds the row already failed.
+      if (
+        advanceStatus &&
+        mapped.status === "DELIVERY_FAILED" &&
+        dispatch.status !== "DELIVERY_FAILED"
+      ) {
+        try {
+          await prisma.notification.create({
+            data: {
+              type: "DELIVERY_FAILED",
+              message: `Anchor could not deliver to ${dispatch.patientName} at ${dispatch.deliveryAddress}, ${dispatch.deliveryCity}.`,
+              storeId: dispatch.storeId,
+            },
+          });
+        } catch (notifyErr) {
+          console.error("[SPOKE] Failed to record failed-delivery notification:", notifyErr);
+        }
+      }
+
       return NextResponse.json({
         ok: true,
         matched: updated.count,

@@ -8,6 +8,8 @@ import { resolveStore } from "@/lib/store";
 // A retry can spend up to ~50s in Spoke's retry/backoff cycle.
 export const maxDuration = 60;
 
+const CANCELLED_MESSAGE = "This order was cancelled, so it won't be sent to Anchor.";
+
 // Safe resume for a failed Spoke handoff: replays dispatchOrderToSpoke with the
 // dispatch's ORIGINAL idempotency key, so anything that actually reached Spoke
 // on a previous attempt is deduped instead of duplicated. This is the sanctioned
@@ -42,6 +44,10 @@ export async function POST(
 
   if (!dispatch || dispatch.storeId !== store.id || dispatch.provider !== "SPOKE") {
     return NextResponse.json({ error: "External dispatch not found" }, { status: 404 });
+  }
+
+  if (dispatch.status === "CANCELLED") {
+    return NextResponse.json({ error: CANCELLED_MESSAGE }, { status: 409 });
   }
 
   if (dispatch.status !== "DISPATCH_FAILED") {
@@ -81,6 +87,12 @@ export async function POST(
       scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
       createdById: dispatch.createdById,
     });
+
+    // Cancelled while the retry was on its way (the sender takes back any
+    // stop it had just created).
+    if (result.dispatch.status === "CANCELLED") {
+      return NextResponse.json({ error: CANCELLED_MESSAGE }, { status: 409 });
+    }
 
     return NextResponse.json({
       message: "Spoke handoff retried.",

@@ -107,7 +107,7 @@ afterEach(() => {
 describe("Skip This Week uses the pharmacy's week", () => {
   it.each([
     ["Saturday 7 PM PDT (UTC is already Sunday)", "2026-10-25T02:00:00Z", "2026-10-18"],
-    ["Saturday 11 PM PST", "2026-11-29T07:00:00Z", "2026-11-22"],
+    ["Saturday 11 PM PST", "2026-01-18T07:00:00Z", "2026-01-11"],
     ["Sunday 12:30 AM PDT", "2026-10-25T07:30:00Z", "2026-10-25"],
   ])("skips the current Vancouver week on %s", async (_label, now, weekKey) => {
     vi.setSystemTime(new Date(now));
