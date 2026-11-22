@@ -76,19 +76,19 @@ function anchorStatus(
 const IN_HOUSE_STATUS = { hasAnchorStop: false, statusLabel: null, statusNote: null, needsAttention: false };
 
 export const dashboardDeliveries: DashboardDelivery[] = [
-  { id: "o1", patientName: "Avery Sandhu", deliveryAddress: "14250 88 Ave", deliveryCity: "Surrey", driverName: "Derek Olsen", status: "ASSIGNED", priceAtCreation: 4.25, failedReason: null, createdAt: at("17:10"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
-  { id: "external-x1", patientName: "Jordan Kaur", deliveryAddress: "6620 King George Blvd", deliveryCity: "Surrey", driverName: "Anchor", status: "SUBMITTED", priceAtCreation: 4.25, failedReason: null, createdAt: at("16:55"), isExternal: true, externalDispatchId: "x1", ...anchorStatus("SUBMITTED", TODAY, "unassignedStops/u1") },
+  { id: "o1", patientName: "Avery Sandhu", deliveryAddress: "14250 88 Ave", deliveryCity: "Surrey", driverName: "Derek Olsen", status: "ASSIGNED", trackingLink: null, failedReason: null, createdAt: at("17:10"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
+  { id: "external-x1", patientName: "Jordan Kaur", deliveryAddress: "6620 King George Blvd", deliveryCity: "Surrey", driverName: "Anchor", status: "SUBMITTED", trackingLink: "/dev/spoke-tracking/x1", failedReason: null, createdAt: at("16:55"), isExternal: true, externalDispatchId: "x1", ...anchorStatus("SUBMITTED", TODAY, "unassignedStops/u1") },
   // Held for today's 6 AM run, still here at 11: shown like a failure.
-  { id: "external-x6", patientName: "Harper Mann", deliveryAddress: "12101 72 Ave", deliveryCity: "Surrey", driverName: "Anchor", status: "SCHEDULED", priceAtCreation: 4.25, failedReason: null, createdAt: at("16:40"), isExternal: true, externalDispatchId: "x6", ...anchorStatus("SCHEDULED", TODAY) },
-  { id: "o2", patientName: "Riley Chen", deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", driverName: "Derek Olsen", status: "PICKED_UP", priceAtCreation: 4.25, failedReason: null, createdAt: at("16:20"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
-  { id: "o3", patientName: "Morgan Patel", deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", driverName: "Derek Olsen", status: "FAILED", priceAtCreation: 4.25, failedReason: "No one home — left a card", createdAt: at("15:45"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
+  { id: "external-x6", patientName: "Harper Mann", deliveryAddress: "12101 72 Ave", deliveryCity: "Surrey", driverName: "Anchor", status: "SCHEDULED", trackingLink: null, failedReason: null, createdAt: at("16:40"), isExternal: true, externalDispatchId: "x6", ...anchorStatus("SCHEDULED", TODAY) },
+  { id: "o2", patientName: "Riley Chen", deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", driverName: "Derek Olsen", status: "PICKED_UP", trackingLink: null, failedReason: null, createdAt: at("16:20"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
+  { id: "o3", patientName: "Morgan Patel", deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", driverName: "Derek Olsen", status: "FAILED", trackingLink: null, failedReason: "No one home — left a card", createdAt: at("15:45"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
   // Never reached Anchor: Retry and Cancel side by side.
-  { id: "external-x2", patientName: "Sam Gill", deliveryAddress: "7380 120 St", deliveryCity: "Delta", driverName: "Anchor", status: "DISPATCH_FAILED", priceAtCreation: 4.25, failedReason: "Spoke did not respond", createdAt: at("15:30"), isExternal: true, externalDispatchId: "x2", ...anchorStatus("DISPATCH_FAILED", TODAY) },
-  { id: "external-x5", patientName: "Alex Grewal", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: "Anchor", status: "DELIVERY_FAILED", priceAtCreation: 5.25, failedReason: null, createdAt: at("15:20"), isExternal: true, externalDispatchId: "x5", ...anchorStatus("DELIVERY_FAILED", TODAY, "plans/p1/stops/s5") },
+  { id: "external-x2", patientName: "Sam Gill", deliveryAddress: "7380 120 St", deliveryCity: "Delta", driverName: "Anchor", status: "DISPATCH_FAILED", trackingLink: null, failedReason: "Spoke did not respond", createdAt: at("15:30"), isExternal: true, externalDispatchId: "x2", ...anchorStatus("DISPATCH_FAILED", TODAY) },
+  { id: "external-x5", patientName: "Alex Grewal", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: "Anchor", status: "DELIVERY_FAILED", trackingLink: null, failedReason: null, createdAt: at("15:20"), isExternal: true, externalDispatchId: "x5", ...anchorStatus("DELIVERY_FAILED", TODAY, "plans/p1/stops/s5") },
   // Cancelled here, but its stop couldn't be removed at Anchor: shown like a failure.
-  { id: "external-x8", patientName: "Drew Sidhu", deliveryAddress: "9045 160 St", deliveryCity: "Surrey", driverName: "Anchor", status: "CANCELLED", priceAtCreation: 4.25, failedReason: null, createdAt: at("15:10"), isExternal: true, externalDispatchId: "x8", ...anchorStatus("CANCELLED", TODAY, "unassignedStops/u8", "CANCEL_CLEANUP_FAILED") },
-  { id: "o4", patientName: "Taylor Dhillon", deliveryAddress: "10153 King George Blvd", deliveryCity: "Surrey", driverName: "Priya Bains", status: "DELIVERED", priceAtCreation: 4.25, failedReason: null, createdAt: at("15:05"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
-  { id: "o5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: null, status: "PENDING", priceAtCreation: 5.25, failedReason: null, createdAt: at("14:40"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
+  { id: "external-x8", patientName: "Drew Sidhu", deliveryAddress: "9045 160 St", deliveryCity: "Surrey", driverName: "Anchor", status: "CANCELLED", trackingLink: null, failedReason: null, createdAt: at("15:10"), isExternal: true, externalDispatchId: "x8", ...anchorStatus("CANCELLED", TODAY, "unassignedStops/u8", "CANCEL_CLEANUP_FAILED") },
+  { id: "o4", patientName: "Taylor Dhillon", deliveryAddress: "10153 King George Blvd", deliveryCity: "Surrey", driverName: "Priya Bains", status: "DELIVERED", trackingLink: null, failedReason: null, createdAt: at("15:05"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
+  { id: "o5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: null, status: "PENDING", trackingLink: null, failedReason: null, createdAt: at("14:40"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
 ];
 
 // Anchor orders waiting for a later day's 6 AM run (the dashboard's line).
@@ -313,7 +313,7 @@ export function calendarInstances(start: string, end: string) {
   const out = [];
   const first = new Date(`${start}T00:00:00.000Z`);
   const last = new Date(`${end}T00:00:00.000Z`);
-  for (let d = new Date(first); d <= last; d.setUTCDate(d.getUTCDate() + 1)) {
+  for (let d = new Date(first); d < last; d.setUTCDate(d.getUTCDate() + 1)) {
     const key = d.toISOString().slice(0, 10);
     const sunday = new Date(d);
     sunday.setUTCDate(d.getUTCDate() - d.getUTCDay());

@@ -1,16 +1,13 @@
 import Link from "next/link";
 import OrdersPoller from "./OrdersPoller";
 import OrdersList from "./OrdersList";
-import PageHeader from "@/components/ui/PageHeader";
 import { ANCHOR_ORDER_FILTERS } from "@/lib/orderFilters";
+import DeliveryHero from "@/components/DeliveryHero";
+import artwork from "@/assets/delivery-orders-hero.webp";
 import {
   cn,
-  ctaShadow,
   emptyState,
   input,
-  pageAction,
-  pageTitle,
-  primaryButton,
   secondaryButton,
   selectablePill,
   statusBadgeClasses,
@@ -31,7 +28,7 @@ export const ORDER_STATUS_FILTERS = [
 // Every pill: the status filters by name, then the Anchor-only ones
 // (src/lib/orderFilters.ts), which read in plain words.
 const FILTER_PILLS = [
-  ...ORDER_STATUS_FILTERS.map((key) => ({ key, label: key.replace(/_/g, " ") })),
+  ...ORDER_STATUS_FILTERS.map((key) => ({ key, label: key.charAt(0) + key.slice(1).toLowerCase().replaceAll("_", " ") })),
   ...ANCHOR_ORDER_FILTERS,
 ];
 
@@ -89,17 +86,7 @@ export default function OrdersView({
   return (
     <div>
       {poll && <OrdersPoller />}
-      <PageHeader className="flex items-center justify-between mb-8">
-        <h1 className={pageTitle}>
-          Orders, organized
-        </h1>
-        <Link
-          href={`/${storeSlug}/orders/new`}
-          className={cn(primaryButton, ctaShadow, pageAction)}
-        >
-          + New Order
-        </Link>
-      </PageHeader>
+      <DeliveryHero title="Orders" artwork={artwork} storeSlug={storeSlug} className="orders-hero" />
 
       {/* Search Bar */}
       <form method="GET" className="mb-4">
@@ -111,6 +98,7 @@ export default function OrdersView({
           <input
             type="text"
             name="search"
+            aria-label="Search orders by patient name"
             placeholder="Search by patient name..."
             defaultValue={search}
             className={`${input} pl-10`}
@@ -119,13 +107,12 @@ export default function OrdersView({
       </form>
 
       {/* Status Filter */}
-      <div className="flex flex-wrap gap-2 mb-4">
+      <nav aria-label="Filter orders by status" className="flex flex-wrap gap-2 mb-4">
         <Link
           href={`/${storeSlug}/orders${search ? `?search=${encodeURIComponent(search)}` : ""}`}
           aria-current={!status ? "page" : undefined}
-          className={cn(selectablePill, "inline-flex items-center gap-2")}
+          className={selectablePill}
         >
-          <span className="select-dot" aria-hidden="true" />
           All ({total})
         </Link>
         {FILTER_PILLS.map(
@@ -134,14 +121,13 @@ export default function OrdersView({
               key={key}
               href={`/${storeSlug}/orders?status=${key}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
               aria-current={status === key ? "page" : undefined}
-              className={cn(selectablePill, "inline-flex items-center gap-2")}
+              className={selectablePill}
             >
-              <span className="select-dot" aria-hidden="true" />
               {label}
             </Link>
           )
         )}
-      </div>
+      </nav>
 
       {/* Grouped Orders */}
       {orderCount === 0 ? (

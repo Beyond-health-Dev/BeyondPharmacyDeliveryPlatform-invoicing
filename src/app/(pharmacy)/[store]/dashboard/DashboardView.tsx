@@ -1,27 +1,25 @@
+"use client";
+
+import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
+import {
+  ArrowRight,
+  CalendarDays,
+  ExternalLink,
+  Package,
+  Search,
+} from "lucide-react";
+import artwork from "@/assets/delivery-dashboard-rainbow.webp";
+import attentionIcon from "@/assets/delivery-icons/attention.webp";
+import deliveredIcon from "@/assets/delivery-icons/delivered.webp";
+import movingIcon from "@/assets/delivery-icons/moving.webp";
+import totalIcon from "@/assets/delivery-icons/total.webp";
+import DeliveryHero from "@/components/DeliveryHero";
 import ExternalDispatchActions from "@/components/ExternalDispatchActions";
 import NotificationPanel from "@/components/NotificationPanel";
-import PageHeader from "@/components/ui/PageHeader";
-import { FAILED_EXTERNAL_STATUSES } from "@/lib/externalDispatchStatus";
 import { WAITING_FILTER } from "@/lib/orderFilters";
-import {
-  card,
-  cn,
-  ctaShadow,
-  emptyState,
-  pageAction,
-  pageTitle,
-  primaryButton,
-  sectionTitle,
-  statusBadgeClasses,
-  tableHeader,
-  tableRow,
-  tintedLinkButton,
-} from "@/lib/portalStyles";
-import { toneBadgeClasses } from "@/lib/statusTheme";
-
-// An in-house failure, or an Anchor order that failed or never reached Anchor.
-const FAILED_STATUSES = new Set(["FAILED", ...FAILED_EXTERNAL_STATUSES]);
+import { statusTone } from "@/lib/statusTheme";
 
 export type DashboardDelivery = {
   id: string;
@@ -30,167 +28,248 @@ export type DashboardDelivery = {
   deliveryCity: string;
   driverName: string | null;
   status: string;
-  priceAtCreation: number;
+  trackingLink: string | null;
   failedReason: string | null;
   createdAt: Date;
   isExternal: boolean;
   externalDispatchId: string | null;
   canCancelExternal: boolean;
   hasAnchorStop: boolean;
-  // Anchor rows only (null / false in-house), worked out on the server:
-  // badge text, a note under it, and whether a held order missed its send.
   statusLabel: string | null;
   statusNote: string | null;
   needsAttention: boolean;
 };
 
-// The Actions cell of a row with nothing to do.
-const NO_ACTION = <span className="text-xs text-ink">-</span>;
+const filters = [
+  { value: "all", label: "All statuses" },
+  { value: "queued", label: "Queued" },
+  { value: "moving", label: "On the road" },
+  { value: "delivered", label: "Delivered" },
+  { value: "attention", label: "Needs attention" },
+  { value: "cancelled", label: "Cancelled" },
+] as const;
 
-// Presentational dashboard; the page supplies the data. Kept separate so the
-// dev-only style guide can render it from fixtures.
+type Filter = (typeof filters)[number]["value"];
+
+const metrics = [
+  { key: "all", label: "Total deliveries", icon: totalIcon, tone: "blue" },
+  { key: "moving", label: "On the road", icon: movingIcon, tone: "lilac" },
+  { key: "delivered", label: "Delivered", icon: deliveredIcon, tone: "mint" },
+  { key: "attention", label: "Needs attention", icon: attentionIcon, tone: "blush" },
+] as const;
+
+const dateFormat = new Intl.DateTimeFormat("en-CA", {
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+  timeZone: "UTC",
+});
+
+function groupStatus(status: string): Exclude<Filter, "all"> {
+  if (status === "DELIVERED") return "delivered";
+  if (status === "CANCELLED") return "cancelled";
+  const tone = statusTone(status);
+  if (tone === "lilac") return "moving";
+  if (tone === "blush") return "attention";
+  return "queued";
+}
+
+function displayStatus(status: string) {
+  const words = status.toLowerCase().replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function SpokeTracking({ delivery }: { delivery: DashboardDelivery }) {
+  if (!delivery.isExternal) {
+    return (
+      <span className="delivery-tracking-note">
+        <span aria-hidden="true">—</span>
+        <span className="sr-only">In-house delivery</span>
+      </span>
+    );
+  }
+  if (delivery.status === "CANCELLED" || delivery.status === "DISPATCH_FAILED") {
+    return <span className="delivery-tracking-note">Unavailable</span>;
+  }
+  if (delivery.trackingLink) {
+    return (
+      <a
+        href={delivery.trackingLink}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Track ${delivery.patientName}’s delivery in Spoke (opens in a new tab)`}
+        className="delivery-text-link"
+      >
+        Track <ExternalLink size={13} aria-hidden="true" />
+      </a>
+    );
+  }
+  const finished = delivery.status === "DELIVERED" || delivery.status === "DELIVERY_FAILED";
+  return <span className="delivery-tracking-note">{finished ? "Unavailable" : "Awaiting link"}</span>;
+}
+
 export default function DashboardView({
   storeSlug,
+  dayKey,
   deliveries,
   heldForAnchorCount,
 }: {
   storeSlug: string;
+  dayKey: string;
   deliveries: DashboardDelivery[];
-  // Anchor orders waiting for their 6 AM run (any date).
   heldForAnchorCount: number;
 }) {
+  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
+  const summary: Record<Filter, number> = {
+    all: deliveries.length, queued: 0, moving: 0, delivered: 0, attention: 0, cancelled: 0,
+  };
+  const visibleDeliveries: DashboardDelivery[] = [];
+  for (const order of deliveries) {
+    const group = order.needsAttention ? "attention" : groupStatus(order.status);
+    summary[group] += 1;
+    if (filter === "cancelled" ? order.status !== "CANCELLED" : filter !== "all" && filter !== group) continue;
+    const searchText = [
+      order.patientName, order.deliveryAddress, order.deliveryCity, order.driverName,
+    ].join(" ").toLowerCase();
+    if (searchText.includes(query)) visibleDeliveries.push(order);
+  }
+
   return (
-    <div>
-      <PageHeader className="flex items-center justify-between mb-8">
-        <h1 className={pageTitle}>
-          Pharmacy flow
-        </h1>
-        <Link
-          href={`/${storeSlug}/orders/new`}
-          className={cn(primaryButton, ctaShadow, pageAction)}
-        >
-          + New Order
-        </Link>
-      </PageHeader>
+    <div className="delivery-dashboard">
+      <DeliveryHero title="Delivery overview" artwork={artwork} storeSlug={storeSlug}>
+        <time dateTime={dayKey} className="delivery-date">
+          <CalendarDays size={15} aria-hidden="true" />
+          {dateFormat.format(new Date(dayKey + "T00:00:00Z"))}
+        </time>
+      </DeliveryHero>
 
-      {/* Navy: the line sits partly over the header's pastel circle. */}
-      {heldForAnchorCount > 0 && (
-        <p className="-mt-4 mb-6 text-sm">
-          <Link href={`/${storeSlug}/orders?status=${WAITING_FILTER}`} className={tintedLinkButton}>
-            {heldForAnchorCount} {heldForAnchorCount === 1 ? "order" : "orders"} waiting to go to Anchor
-          </Link>
-        </p>
-      )}
+      <section aria-label="Filter by delivery summary" className="delivery-metrics">
+        {metrics.map(({ key, label, icon, tone }) => (
+          <button
+            key={key}
+            type="button"
+            data-tone={tone}
+            aria-pressed={filter === key}
+            aria-controls="delivery-queue"
+            onClick={() => setFilter(key)}
+            className="delivery-metric"
+          >
+            <Image src={icon} alt="" unoptimized draggable={false} className="delivery-metric-icon" />
+            <span className="delivery-metric-copy">
+              <span>{label}</span>
+              <strong>{summary[key]}</strong>
+            </span>
+          </button>
+        ))}
+      </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Today's Orders */}
-        <div data-reveal="" className={`lg:col-span-2 ${card} overflow-hidden`}>
-          <div className="px-6 py-4 border-b border-hairline">
-            <h2 className={sectionTitle}>Today&apos;s Deliveries</h2>
+      <div className="delivery-panels">
+        <section className="delivery-panel" id="delivery-queue" aria-labelledby="delivery-queue-title">
+          <div className="delivery-panel-heading">
+            <h2 id="delivery-queue-title">Today&apos;s deliveries</h2>
+            <Link href={"/" + storeSlug + "/orders"} className="delivery-text-link">
+              View all orders <ArrowRight size={16} aria-hidden="true" />
+            </Link>
           </div>
-          {deliveries.length === 0 ? (
-            <div className={cn(emptyState, "m-4")}>
-              No deliveries <span className="text-navy">scheduled</span> for today.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className={tableHeader}>
-                  <tr>
-                    <th className="px-6 py-3">
-                      Patient
-                    </th>
-                    <th className="px-6 py-3">
-                      Address
-                    </th>
-                    <th className="px-6 py-3">
-                      Driver
-                    </th>
-                    <th className="px-6 py-3">
-                      Status
-                    </th>
-                    <th className="px-6 py-3">
-                      Price
-                    </th>
-                    <th className="px-6 py-3">
-                      Actions
-                    </th>
+          {heldForAnchorCount > 0 && (
+            <Link href={`/${storeSlug}/orders?status=${WAITING_FILTER}`} className="delivery-text-link mx-4 mb-2">
+              {heldForAnchorCount} {heldForAnchorCount === 1 ? "order" : "orders"} waiting to go to Anchor
+            </Link>
+          )}
+          <div className="delivery-toolbar">
+            <label className="delivery-search">
+              <Search size={17} strokeWidth={1.8} aria-hidden="true" />
+              <span className="sr-only">Search deliveries</span>
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search deliveries"
+              />
+            </label>
+            <label className="delivery-filter">
+              <span className="sr-only">Filter by status</span>
+              <select value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
+                {filters.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+          </div>
+          {visibleDeliveries.length > 0 ? (
+            <table className="delivery-table" role="table" aria-labelledby="delivery-queue-title">
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th scope="col" role="columnheader">Patient</th>
+                  <th scope="col" role="columnheader">Address</th>
+                  <th scope="col" role="columnheader">Driver</th>
+                  <th scope="col" role="columnheader">Status</th>
+                  <th scope="col" role="columnheader">Spoke tracking</th>
+                  <th scope="col" role="columnheader">Actions</th>
+                </tr>
+              </thead>
+              <tbody role="rowgroup">
+                {visibleDeliveries.map((order) => (
+                  <tr key={order.id} role="row">
+                    <td role="cell" className="delivery-patient">{order.patientName}</td>
+                    <td role="cell" className="delivery-address">
+                      {order.deliveryAddress}
+                      <span className="delivery-cell-detail">{order.deliveryCity}</span>
+                    </td>
+                    <td role="cell" className="delivery-driver">
+                      {order.driverName || "Unassigned"}
+                      {order.isExternal && <span className="delivery-cell-detail">Spoke</span>}
+                    </td>
+                    <td role="cell" className="delivery-state">
+                      <span className="delivery-status" data-tone={order.needsAttention ? "blush" : statusTone(order.status)}>
+                        {order.statusLabel ?? displayStatus(order.status)}
+                      </span>
+                      {order.statusNote && <span className="delivery-cell-detail">{order.statusNote}</span>}
+                      {order.status === "FAILED" && order.failedReason && (
+                        <span className="delivery-failed-reason">{order.failedReason}</span>
+                      )}
+                    </td>
+                    <td role="cell" className="delivery-tracking"><SpokeTracking delivery={order} /></td>
+                    <td role="cell" className="delivery-actions" data-external={order.isExternal}>
+                      {order.isExternal ? (
+                        <ExternalDispatchActions
+                          dispatchId={order.externalDispatchId}
+                          currentStatus={order.status}
+                          canCancel={order.canCancelExternal}
+                          hasAnchorStop={order.hasAnchorStop}
+                          patientName={order.patientName}
+                          onAttentionRow={order.needsAttention || groupStatus(order.status) === "attention"}
+                          noAction={<span aria-label="No actions">—</span>}
+                          storeSlug={storeSlug}
+                        />
+                      ) : (
+                        <span aria-label="No actions">—</span>
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-hairline">
-                  {deliveries.map((order) => {
-                    // Failed, or a held Anchor order that missed its send.
-                    const failed = FAILED_STATUSES.has(order.status) || order.needsAttention;
-                    return (
-                      <tr
-                        key={order.id}
-                        className={`${tableRow} ${failed ? "bg-blush" : ""}`}
-                      >
-                        <td className="px-6 py-4 text-sm font-semibold text-navy">
-                          {order.patientName}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-ink">
-                          {order.deliveryAddress}, {order.deliveryCity}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-ink">
-                          <span>{order.driverName || "Unassigned"}</span>
-                          {order.isExternal && (
-                            <span className="ml-2 inline-flex rounded-full bg-blue px-2 py-0.5 text-xs font-bold text-navy">
-                              Spoke
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          {/* On the blush failed row, the chip turns white to stay visible.
-                              The chip doesn't wrap (the table scrolls sideways on a phone
-                              instead); a note, which can run to two sentences, does. */}
-                          <span className={cn(failed ? toneBadgeClasses("white") : statusBadgeClasses(order.status), "whitespace-nowrap")}>
-                            {order.statusLabel ?? order.status.replace(/_/g, " ")}
-                          </span>
-                          {order.statusNote && (
-                            <p className={cn("mt-1 min-w-48 max-w-64 text-xs font-medium", failed ? "text-navy" : "text-muted")}>
-                              {order.statusNote}
-                            </p>
-                          )}
-                          {/* Anchor's error text is technical, so only a driver's reason shows. */}
-                          {order.status === "FAILED" && order.failedReason && (
-                            <p className="text-xs text-danger mt-1">
-                              {order.failedReason}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-navy tabular-nums">
-                          ${order.priceAtCreation.toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4">
-                          {order.isExternal ? (
-                            <ExternalDispatchActions
-                              dispatchId={order.externalDispatchId}
-                              currentStatus={order.status}
-                              canCancel={order.canCancelExternal}
-                              hasAnchorStop={order.hasAnchorStop}
-                              storeSlug={storeSlug}
-                              patientName={order.patientName}
-                              onAttentionRow={failed}
-                              noAction={NO_ACTION}
-                            />
-                          ) : (
-                            NO_ACTION
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="delivery-empty">
+              <Package size={23} strokeWidth={1.7} aria-hidden="true" />
+              <p>{deliveries.length ? "No deliveries match these filters." : "No deliveries scheduled for today."}</p>
+              {deliveries.length > 0 && (
+                <button
+                  type="button"
+                  className="delivery-text-link"
+                  onClick={() => { setFilter("all"); setSearch(""); }}
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
           )}
-        </div>
-
-        {/* Notifications Panel */}
-        <div data-reveal="" className="lg:col-span-1">
-          <NotificationPanel storeSlug={storeSlug} />
-        </div>
+          <p className="delivery-count" role="status">
+            Showing {visibleDeliveries.length} of {deliveries.length} deliveries
+          </p>
+        </section>
+        <NotificationPanel key={storeSlug} storeSlug={storeSlug} />
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ import {
 } from "./_fixtures";
 
 const PATCHED = Symbol.for("beyond.devFetchStub");
+const dismissedNotifications = new Set<string>();
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -90,7 +91,12 @@ function answer(url: URL, method: string, body: unknown): Response {
 
   if (method === "POST" && path === "orders") {
     const held = heldAnchorOrder(body);
-    if (held) return held;
+    return held ?? json({ error: "This preview uses sample data. New orders aren’t saved." }, 400);
+  }
+  const notificationPatch = path.match(/^notifications\/([^/]+)$/);
+  if (method === "PATCH" && notificationPatch) {
+    dismissedNotifications.add(notificationPatch[1]);
+    return json({ ok: true });
   }
   const action = anchorAction(path, method);
   if (action) return action;
@@ -103,7 +109,12 @@ function answer(url: URL, method: string, body: unknown): Response {
   if (path === "recurring/labels") {
     return json({ error: "Label PDFs need the real server — the style guide has no database." }, 404);
   }
-  if (path === "notifications") return json(notifications);
+  if (path === "notifications") {
+    return json(notifications.map((item) => ({
+      ...item,
+      isRead: item.isRead || dismissedNotifications.has(item.id),
+    })));
+  }
   if (path === "reminders") {
     return url.searchParams.get("scope") === "due" &&
       window.location.pathname === "/dev/reminder-popup"
@@ -155,7 +166,7 @@ if (typeof window !== "undefined" && !(window as unknown as Record<symbol, boole
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(raw, window.location.origin);
-    if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
+    if (url.origin === window.location.origin && url.pathname.startsWith("/api/dev/")) {
       const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
       return answer(url, method, init?.body);
     }

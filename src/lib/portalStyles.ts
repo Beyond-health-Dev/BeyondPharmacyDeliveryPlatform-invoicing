@@ -14,8 +14,6 @@ export function cn(...classes: Array<string | false | null | undefined>) {
 // (above the page background, beneath every card).
 export const portalShell = "isolate min-h-screen overflow-x-clip bg-white text-navy";
 
-export const portalMain = "mx-auto w-full max-w-content py-6";
-
 export const driverMain = "max-w-lg mx-auto px-4 py-4";
 
 // ---- Surfaces ----
@@ -52,18 +50,17 @@ export const textLink =
 // ---- Form controls ----
 
 export const input =
-  "w-full rounded-row border border-hairline bg-white px-3 py-2 text-sm text-navy outline-none transition duration-(--hover-ms) placeholder:text-muted focus:border-navy focus:ring-2 focus:ring-navy";
+  "portal-field w-full rounded-row border bg-white px-3 py-2 text-sm text-navy outline-none transition duration-(--hover-ms) placeholder:text-muted focus:border-navy focus:ring-2 focus:ring-navy";
 
 export const inputReadOnly = "bg-panel-cream text-muted";
 
-// ---- Buttons (all fully round; press = scale .97) ----
+// ---- Buttons ----
 
 const BUTTON_BASE =
-  "rounded-full border-(length:--line-strong) font-bold transition duration-(--hover-ms) ease-out active:scale-(--press-scale) disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-(--r-button) border-(length:--line-strong) font-bold transition duration-(--hover-ms) ease-out active:scale-(--press-scale) disabled:cursor-not-allowed disabled:opacity-50";
 
 const BUTTON_TONES = {
-  // Navy pill, cream text.
-  primary: "border-transparent bg-navy text-cream hover:bg-navy-deep",
+  primary: "portal-primary border-transparent",
   // White, faint navy border; border darkens on hover.
   secondary: "border-control bg-white text-navy shadow-soft hover:border-control-hover",
   // Destructive: blush fill, danger text — never a red fill.
@@ -120,7 +117,7 @@ export const selectableRow = "selectable rounded-row";
 // ---- Tables ----
 
 export const tableHeader =
-  "bg-navy text-left text-xs font-bold uppercase tracking-table text-cream";
+  "portal-table-heading text-left text-xs font-bold uppercase tracking-table";
 
 // Rows aren't clickable, so no hover tint (it would also drop the green
 // row-action links under 4.5:1).

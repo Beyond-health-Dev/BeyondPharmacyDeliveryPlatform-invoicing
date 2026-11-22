@@ -19,7 +19,7 @@ export default function PricingView({
     <div>
       <PageHeader className="mb-8">
         <h1 className={pageTitle}>
-          Delivery Zones, priced
+          Delivery zones
         </h1>
       </PageHeader>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -179,7 +179,7 @@ export default function RecurringOrderForm({
 
   return (
     <div className={`${card} p-6`}>
-      <h2 className={`${sectionTitle} mb-4`}>New Recurring Order</h2>
+      <h2 className={`${sectionTitle} mb-4`}>New recurring profile</h2>
       <form onSubmit={handleSubmit} className="space-y-3">
         {error && <div role="alert" className={cn("px-3 py-2 rounded-row text-sm", BANNER_CLASSES.error)}>{error}</div>}
 
@@ -302,7 +302,7 @@ export default function RecurringOrderForm({
         <textarea name="instructions" rows={2} placeholder="Instructions (optional)" className={input} />
 
         <button type="submit" disabled={loading || selectedDays.length === 0 || editingSavedAddress} className={cn(primaryButton, ctaShadow)}>
-          {loading ? "Creating..." : "Create Recurring Order"}
+          {loading ? "Creating…" : "Create profile"}
         </button>
       </form>
     </div>

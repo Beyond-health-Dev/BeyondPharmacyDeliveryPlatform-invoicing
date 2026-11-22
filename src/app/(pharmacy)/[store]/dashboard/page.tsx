@@ -5,17 +5,27 @@ import { recurringPeopleMatch } from "@/lib/recurringDuplicateGuard";
 import { getVancouverDeliveryDateInfo } from "@/lib/cron";
 import { externalDispatchRowView } from "@/lib/externalDispatchStatus";
 import { vancouverHour } from "@/lib/vancouverDate";
+import { getSpokeTrackingUrl } from "@/lib/spoke";
 import type { Prisma } from "@prisma/client";
+import OrdersPoller from "../orders/OrdersPoller";
 import DashboardView, { type DashboardDelivery } from "./DashboardView";
 
-type DashboardOrder = Prisma.OrderGetPayload<{
-  include: { assignedDriver: true; deliveryZone: true };
-}>;
+const orderFields = {
+  id: true, createdAt: true, recurringOrderId: true, status: true, failedReason: true,
+  patientId: true, patientName: true, patientPhone: true,
+  deliveryAddress: true, deliveryCity: true, deliveryPostalCode: true,
+  assignedDriver: { select: { name: true } },
+} satisfies Prisma.OrderSelect;
 
-type DashboardExternalDispatch = Prisma.ExternalDispatchGetPayload<{
-  include: { selectedProviderUser: true };
-}>;
+const dispatchFields = {
+  id: true, createdAt: true, status: true, spokeStopId: true,
+  workflowStep: true, scheduledDate: true,
+  patientName: true, deliveryAddress: true, deliveryCity: true, trackingLink: true,
+  selectedProviderUser: { select: { name: true } },
+} satisfies Prisma.ExternalDispatchSelect;
 
+type DashboardOrder = Prisma.OrderGetPayload<{ select: typeof orderFields }>;
+type DashboardExternalDispatch = Prisma.ExternalDispatchGetPayload<{ select: typeof dispatchFields }>;
 
 function shouldReplaceDuplicateOrder(
   existing: DashboardOrder,
@@ -64,7 +74,7 @@ function toDashboardDelivery(order: DashboardOrder): DashboardDelivery {
     deliveryCity: order.deliveryCity,
     driverName: order.assignedDriver?.name ?? null,
     status: order.status,
-    priceAtCreation: order.priceAtCreation,
+    trackingLink: null,
     failedReason: order.failedReason,
     createdAt: order.createdAt,
     isExternal: false,
@@ -88,8 +98,8 @@ function toExternalDashboardDelivery(
     deliveryCity: dispatch.deliveryCity,
     driverName: dispatch.selectedProviderUser?.name ?? "Anchor / Spoke",
     status: dispatch.status,
-    priceAtCreation: dispatch.priceAtCreation,
-    failedReason: dispatch.errorMessage,
+    trackingLink: getSpokeTrackingUrl(dispatch.trackingLink),
+    failedReason: null,
     createdAt: dispatch.createdAt,
     isExternal: true,
     externalDispatchId: dispatch.id,
@@ -119,7 +129,7 @@ export default async function DashboardPage({
         storeId: store.id,
         scheduledDate: { gte: today, lt: tomorrow },
       },
-      include: { assignedDriver: true, deliveryZone: true },
+      select: orderFields,
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     prisma.externalDispatch.findMany({
@@ -130,7 +140,7 @@ export default async function DashboardPage({
         // Failed handoffs stay visible — hiding them makes the delivery look
         // "never entered" and invites a duplicate re-entry.
       },
-      include: { selectedProviderUser: true },
+      select: dispatchFields,
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     // Anchor orders still held for their 6 AM run, whatever their date.
@@ -144,10 +154,9 @@ export default async function DashboardPage({
   ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   return (
-    <DashboardView
-      storeSlug={store.slug}
-      deliveries={todayOrders}
-      heldForAnchorCount={heldForAnchorCount}
-    />
+    <>
+      <OrdersPoller />
+      <DashboardView storeSlug={store.slug} dayKey={todayKey} deliveries={todayOrders} heldForAnchorCount={heldForAnchorCount} />
+    </>
   );
 }

@@ -108,6 +108,7 @@
   --r-mid: clamp(12px, 2.333vw, 28px);
   --r-row: clamp(9px, 1.5vw, 18px);
   --r-pill: 999px;
+  --r-button: var(--r-pill);
 
   /* ---- Layout ---- */
   --content-width: min(1200px, 92vw);
@@ -161,6 +162,24 @@
 }
 
 @layer components {
+  .portal-primary {
+    background: var(--primary-button-fill, var(--navy));
+    color: var(--primary-button-ink, var(--cream));
+  }
+
+  .portal-primary:hover:not(:disabled) {
+    background: var(--primary-button-hover-fill, var(--navy-deep));
+  }
+
+  .portal-field {
+    border-color: var(--field-border, var(--hairline));
+  }
+
+  .portal-table-heading {
+    background: var(--table-heading-fill, var(--navy));
+    color: var(--table-heading-text, var(--cream));
+  }
+
   /* ---- Decorative pastel circles (always aria-hidden, never interactive) ----
      .circle-host: a panel or full-screen page with its own background — its
      own stacking context, so circles sit above its fill and below its content.
@@ -232,7 +251,8 @@
     background-image: var(--gradient-rest-white);
     transition: background-image 320ms ease;
   }
-  .row-hover:hover {
+  .row-hover:hover,
+  .row-hover[aria-selected="true"] {
     background-image: var(--gradient-light);
   }
 

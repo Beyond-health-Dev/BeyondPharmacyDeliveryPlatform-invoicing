@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
+import { Bell } from "lucide-react";
 import Modal from "@/components/ui/Modal";
 import { BANNER_CLASSES, toneBadgeClasses } from "@/lib/statusTheme";
 import { cn, primaryButton, sectionTitle } from "@/lib/portalStyles";
@@ -132,9 +133,7 @@ export default function ReminderPopup({ storeSlug }: { storeSlug: string }) {
     <Modal open onClose={snooze} size="lg" labelledBy={titleId}>
       <div className="shrink-0 border-b border-hairline px-6 pb-4 pt-2 sm:pt-4">
         <div className="flex items-center gap-2">
-          <span aria-hidden className="text-xl">
-            🔔
-          </span>
+          <Bell size={19} strokeWidth={1.8} className="text-navy" aria-hidden="true" />
           <h3 id={titleId} className={sectionTitle}>Reminders for today</h3>
         </div>
         <p className="mt-1 text-sm text-muted">

@@ -2,11 +2,25 @@ import crypto from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   canAdvanceDispatchStatus,
+  getSpokeTrackingUrl,
   mapSpokeWebhookStatus,
   parseScheduledDateKey,
   shouldRouteToSpoke,
   verifySpokeSignature,
 } from "@/lib/spoke";
+
+describe("getSpokeTrackingUrl", () => {
+  it("preserves a provider's absolute HTTPS tracking link and query", () => {
+    const link = "https://tracking.example.test/stop/sample?key=a%2Bb&view=map";
+    expect(getSpokeTrackingUrl(`  ${link}  `)).toBe(link);
+  });
+
+  it("treats missing or unusable tracking data as unavailable", () => {
+    for (const value of [null, undefined, "", "/stops/sample", {}, "http://tracking.example.test/sample"]) {
+      expect(getSpokeTrackingUrl(value)).toBeNull();
+    }
+  });
+});
 
 describe("shouldRouteToSpoke", () => {
   beforeEach(() => {

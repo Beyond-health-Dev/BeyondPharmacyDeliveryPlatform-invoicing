@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import Modal from "@/components/ui/Modal";
 import { useConfirm } from "@/components/ui/DialogsProvider";
 import {
@@ -12,13 +13,26 @@ import {
   label,
   sectionTitle,
 } from "@/lib/portalStyles";
-import { BANNER_CLASSES, TONE_CLASSES, statusTone } from "@/lib/statusTheme";
+import { BANNER_CLASSES } from "@/lib/statusTheme";
 import { vancouverWeekStartKey } from "@/lib/vancouverDate";
-
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+import styles from "@/styles/recurring-calendar.module.css";
 
 const ALL = "__all__";
 const UNASSIGNED = "__unassigned__";
+const WEEK_RANGE = new Intl.DateTimeFormat("en-CA", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const FULL_DATE = new Intl.DateTimeFormat("en-CA", {
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const WEEKDAY = new Intl.DateTimeFormat("en-CA", { weekday: "short", timeZone: "UTC" });
+const MONTH_DAY = new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", timeZone: "UTC" });
 
 interface Driver {
   id: string;
@@ -79,48 +93,38 @@ function getCalendarRange(week: Date) {
   return { start, end };
 }
 
-function formatWeekRange(start: Date, end: Date) {
-  const rangeEnd = addDays(end, -1);
-  const startLabel = start.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-  const endLabel = rangeEnd.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-  return `${startLabel} - ${endLabel}`;
-}
-
-function formatDayLabel(date: Date) {
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+function holdLabel(instance: CalendarInstance) {
+  if (!instance.isHeld) return null;
+  if (instance.holdType === "TEMPLATE") return "Vacation hold";
+  if (instance.holdType === "WEEK") return "Skipped this week";
+  return "On hold";
 }
 
 export default function RecurringCalendar({
   storeSlug,
   drivers,
   initialWeekStartKey,
+  todayKey,
 }: {
   storeSlug: string;
   drivers: Driver[];
   // From the server, so the server render and the browser open on the same
   // week even if the browser's clock is off.
   initialWeekStartKey: string;
+  todayKey: string;
 }) {
   const router = useRouter();
   const confirm = useConfirm();
+  const id = useId();
+  const headingId = `${id}-heading`;
+  const quickViewId = `${id}-quick-view`;
+  const reasonId = `${id}-hold-reason`;
   const [visibleWeek, setVisibleWeek] = useState(() => dateFromKey(initialWeekStartKey));
   const [instances, setInstances] = useState<CalendarInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [busyInstance, setBusyInstance] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState("");
+  const [pendingAction, setPendingAction] = useState<"hold" | "delete" | null>(null);
   const [selectedInstance, setSelectedInstance] =
     useState<CalendarInstance | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -170,6 +174,14 @@ export default function RecurringCalendar({
     return map;
   }, [visibleInstances]);
 
+  const heldCount = visibleInstances.filter((instance) => instance.isHeld).length;
+  const ready = !loading && !error;
+  const busy = pendingAction !== null;
+  const driverOptions = [{ id: ALL, name: "All drivers" }, ...drivers];
+  if ((ready && driverCounts[UNASSIGNED] > 0) || activeDriverFilter === UNASSIGNED) {
+    driverOptions.push({ id: UNASSIGNED, name: "Unassigned" });
+  }
+
   useEffect(() => {
     const controller = new AbortController();
 
@@ -188,11 +200,12 @@ export default function RecurringCalendar({
         if (!res.ok) {
           throw new Error(body.error || "Failed to load recurring calendar");
         }
-        setInstances(body.instances ?? []);
+        if (!controller.signal.aborted) setInstances(body.instances ?? []);
       })
       .catch((err) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setError(err instanceof Error ? err.message : "Failed to load recurring calendar");
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Failed to load recurring calendar");
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -202,9 +215,16 @@ export default function RecurringCalendar({
   }, [end, refreshToken, start, storeSlug]);
 
   const showWeek = (week: Date) => {
+    if (week.getTime() === start.getTime()) return;
     setLoading(true);
     setError("");
-    setVisibleWeek(weekStart(week));
+    setVisibleWeek(week);
+  };
+
+  const refreshCalendar = () => {
+    setError("");
+    setLoading(true);
+    setRefreshToken((value) => value + 1);
   };
 
   const toggleInstanceHold = async (instance: CalendarInstance) => {
@@ -213,34 +233,36 @@ export default function RecurringCalendar({
     const holding = !instance.isHeld;
     const reason = holdReasonDraft.trim();
     if (holding && !reason) {
-      setError("Enter a reason for the hold.");
+      setMutationError("Enter a reason for the hold.");
       return;
     }
 
-    setBusyInstance(instance.id);
-    setError("");
+    setPendingAction("hold");
+    setMutationError("");
 
     const action = instance.isHeld ? "unskip" : "skip";
-    const res = await fetch(
-      `/api/${storeSlug}/recurring/${instance.recurringOrderId}/${action}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          skipDate: instance.isHeld && instance.skipDate ? instance.skipDate : instance.date,
-          // Resume Week undoes only the week skip, not a one-day hold under it.
-          ...(instance.holdType === "WEEK" ? { scope: "WEEK" } : {}),
-          ...(holding ? { reason } : {}),
-        }),
+    const fallback = "Failed to update calendar hold";
+    try {
+      const res = await fetch(
+        `/api/${storeSlug}/recurring/${instance.recurringOrderId}/${action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            skipDate: instance.isHeld && instance.skipDate ? instance.skipDate : instance.date,
+            // Resume Week undoes only the week skip, not a one-day hold under it.
+            ...(instance.holdType === "WEEK" ? { scope: "WEEK" } : {}),
+            ...(holding ? { reason } : {}),
+          }),
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setMutationError(body.error || fallback);
+        return;
       }
-    );
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(body.error || "Failed to update calendar hold");
-    } else {
-      // Resuming a week changes every day of it (and may give back a one-day
-      // hold), so close the quick view and let the refreshed week show it.
+      // A resumed week may restore one-day holds under the weekly skip.
       setSelectedInstance(
         instance.holdType === "WEEK"
           ? null
@@ -253,12 +275,13 @@ export default function RecurringCalendar({
             }
       );
       setHoldReasonDraft("");
-      setLoading(true);
-      setRefreshToken((value) => value + 1);
+      refreshCalendar();
       router.refresh();
+    } catch {
+      setMutationError(fallback);
+    } finally {
+      setPendingAction(null);
     }
-
-    setBusyInstance(null);
   };
 
   const deleteRecurringProfile = async (instance: CalendarInstance) => {
@@ -271,188 +294,187 @@ export default function RecurringCalendar({
       return;
     }
 
-    setBusyInstance(instance.id);
-    setError("");
+    setPendingAction("delete");
+    setMutationError("");
 
-    const res = await fetch(
-      `/api/${storeSlug}/recurring/${instance.recurringOrderId}`,
-      { method: "DELETE" }
-    );
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(body.error || "Failed to delete recurring profile");
-    } else {
+    const fallback = "Failed to delete recurring profile";
+    try {
+      const res = await fetch(
+        `/api/${storeSlug}/recurring/${instance.recurringOrderId}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setMutationError(body.error || fallback);
+        return;
+      }
       setSelectedInstance(null);
-      setLoading(true);
-      setRefreshToken((value) => value + 1);
+      refreshCalendar();
       router.refresh();
+    } catch {
+      setMutationError(fallback);
+    } finally {
+      setPendingAction(null);
     }
-
-    setBusyInstance(null);
   };
 
   return (
-    <section className={`${card} overflow-hidden`}>
-      <div className="flex flex-col gap-3 border-b border-hairline px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <section className={cn(card, styles.calendar)} aria-labelledby={headingId}>
+      <header className={styles.header}>
         <div>
-          <h2 className={sectionTitle}>Recurring Calendar</h2>
-          <p className="text-sm text-muted">{formatWeekRange(start, end)}</p>
+          <h2 id={headingId} className={sectionTitle}>Recurring calendar</h2>
+          <p className={styles.weekRange} aria-live="polite">
+            {WEEK_RANGE.formatRange(start, addDays(end, -1))}
+          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className={styles.navigation} role="group" aria-label="Calendar week">
           <button
             type="button"
-            onClick={() => showWeek(addDays(visibleWeek, -7))}
-            className={button("secondary", "sm")}
+            aria-label="Previous week"
+            title="Previous week"
+            onClick={() => showWeek(addDays(start, -7))}
+            className={styles.weekButton}
           >
-            Previous Week
+            <ChevronLeft size={15} aria-hidden="true" /> Previous
           </button>
           <button
             type="button"
             onClick={() => showWeek(dateFromKey(vancouverWeekStartKey()))}
-            className={button("primary", "sm")}
+            className={styles.weekButton}
           >
-            This Week
+            This week
           </button>
           <button
             type="button"
-            onClick={() => showWeek(addDays(visibleWeek, 7))}
-            className={button("secondary", "sm")}
+            aria-label="Next week"
+            title="Next week"
+            onClick={() => showWeek(addDays(start, 7))}
+            className={styles.weekButton}
           >
-            Next Week
+            Next <ChevronRight size={15} aria-hidden="true" />
           </button>
         </div>
-      </div>
+      </header>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-hairline px-6 py-3">
-        <CalendarDriverTab
-          label="All"
-          count={driverCounts[ALL]}
-          active={activeDriverFilter === ALL}
-          onClick={() => setActiveDriverFilter(ALL)}
-        />
-        {driverCounts[UNASSIGNED] > 0 && (
-          <CalendarDriverTab
-            label="Unassigned"
-            count={driverCounts[UNASSIGNED]}
-            active={activeDriverFilter === UNASSIGNED}
-            onClick={() => setActiveDriverFilter(UNASSIGNED)}
-          />
-        )}
-        {drivers.map((d) => (
-          <CalendarDriverTab
-            key={d.id}
-            label={d.name}
-            count={driverCounts[d.id] ?? 0}
-            active={activeDriverFilter === d.id}
-            onClick={() => setActiveDriverFilter(d.id)}
-          />
-        ))}
+      <div className={styles.toolbar}>
+        <div className={styles.filters} role="group" aria-label="Filter deliveries by driver">
+          {driverOptions.map((driver) => (
+            <CalendarDriverTab
+              key={driver.id}
+              label={driver.name}
+              count={ready ? driverCounts[driver.id] : null}
+              active={activeDriverFilter === driver.id}
+              onClick={() => setActiveDriverFilter(driver.id)}
+            />
+          ))}
+        </div>
+        <p className={styles.total} role="status">
+          {loading && "Loading deliveries…"}
+          {ready && (
+            <>
+              {visibleInstances.length - heldCount} scheduled
+              {heldCount > 0 && ` · ${heldCount} on hold`}
+            </>
+          )}
+        </p>
       </div>
 
       {error && (
-        <div role="alert" className={cn("border-b border-hairline px-6 py-3 text-sm", BANNER_CLASSES.error)}>
+        <div role="alert" className={cn(styles.loadError, BANNER_CLASSES.error)}>
           {error}
+          <button type="button" onClick={refreshCalendar} className={button("secondary", "sm")}>
+            Retry
+          </button>
         </div>
       )}
 
-      <div className="grid grid-cols-7 bg-navy">
-        {DAY_LABELS.map((day) => (
-          <div
-            key={day}
-            className="px-2 py-2 text-center text-xs font-bold uppercase tracking-table text-cream"
-          >
-            {day}
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-7">
+      <ol className={styles.week} role="list" aria-label="Days of the week" aria-busy={loading} tabIndex={0}>
         {days.map((day) => {
           const key = dateKey(day);
-          const dayInstances = instancesByDate.get(key) ?? [];
+          const dayInstances = ready ? instancesByDate.get(key) ?? [] : [];
+          const today = key === todayKey;
+          const empty = ready && dayInstances.length === 0;
 
           return (
-            <div
-              key={key}
-              className="min-h-48 border-b border-hairline p-2 sm:border-r"
-            >
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold text-navy">
-                  {formatDayLabel(day)}
+            <li key={key} className={styles.day} data-today={today || undefined}>
+              <h3>
+                <span className={styles.weekday}>
+                  <span aria-hidden="true">{WEEKDAY.format(day)}</span>
+                  {today && <span className={styles.today}>Today</span>}
                 </span>
-                {dayInstances.length > 0 && (
-                  <span className="rounded-full bg-white px-2 py-0.5 text-label font-bold text-muted tabular-nums ring-1 ring-inset ring-hairline">
-                    {dayInstances.length}
-                  </span>
-                )}
-              </div>
+                <span className={styles.dateRow}>
+                  <time dateTime={key} aria-current={today ? "date" : undefined}>
+                    <span className="sr-only">{FULL_DATE.format(day)}</span>
+                    <span aria-hidden="true">{MONTH_DAY.format(day)}</span>
+                  </time>
+                  {dayInstances.length > 0 && (
+                    <span className={styles.dayCount}>
+                      {dayInstances.length}
+                      <span className="sr-only">{dayInstances.length === 1 ? " delivery" : " deliveries"}</span>
+                    </span>
+                  )}
+                </span>
+              </h3>
 
-              {loading ? (
-                <div className="rounded-row bg-white px-2 py-2 text-xs text-muted">
-                  Loading...
-                </div>
-              ) : (
-                <div className="space-y-1">
+              {empty && <p className={styles.emptyDay}>No deliveries</p>}
+              {dayInstances.length > 0 && (
+                <ul className={styles.entries} role="list">
                   {dayInstances.map((instance) => {
-                    const isBusy = busyInstance === instance.id;
+                    const hold = holdLabel(instance);
+                    const details = [instance.deliveryCity, instance.assignedDriverName ?? "Unassigned"]
+                      .filter(Boolean)
+                      .join(" · ");
 
                     return (
-                      <button
-                        key={instance.id}
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => {
-                          setHoldReasonDraft("");
-                          setSelectedInstance(instance);
-                        }}
-                        title={
-                          instance.isHeld && instance.holdReason
-                            ? `On hold: ${instance.holdReason}`
-                            : instance.patientName
-                        }
-                        className={cn(
-                          "block w-full truncate rounded-full px-2.5 py-1 text-left text-label font-semibold transition duration-(--hover-ms) active:scale-(--press-scale) disabled:cursor-not-allowed disabled:opacity-70",
-                          instance.isHeld
-                            ? cn(TONE_CLASSES[statusTone("HOLD")], "hover:bg-blush-hover")
-                            : "row-hover text-navy ring-1 ring-inset ring-hairline hover:ring-control-hover"
-                        )}
-                      >
-                        {isBusy ? "Updating..." : instance.patientName}
-                      </button>
+                      <li key={instance.id}>
+                        <button
+                          type="button"
+                          className={styles.entry}
+                          aria-haspopup="dialog"
+                          title={`${instance.patientName} · ${details}`}
+                          data-held={instance.isHeld || undefined}
+                          onClick={() => {
+                            setMutationError("");
+                            setHoldReasonDraft("");
+                            setSelectedInstance(instance);
+                          }}
+                        >
+                          <span className={styles.patient}>{instance.patientName}</span>
+                          {hold && <span className={styles.hold}>{hold}</span>}
+                        </button>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               )}
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
       <Modal
         open={!!selectedInstance}
         onClose={() => setSelectedInstance(null)}
+        dismissible={!busy}
         size="lg"
-        labelledBy="recurring-quick-view-title"
+        labelledBy={quickViewId}
       >
         {selectedInstance && (
           <div className="overflow-y-auto px-5 pb-5 pt-2 sm:pt-5">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
-                <h3
-                  id="recurring-quick-view-title"
-                  className={sectionTitle}
-                >
+                <h3 id={quickViewId} className={sectionTitle}>
                   {selectedInstance.patientName}
                 </h3>
                 <p className="text-sm text-muted">
-                  {formatDayLabel(new Date(`${selectedInstance.date}T00:00:00.000Z`))}
+                  {FULL_DATE.format(dateFromKey(selectedInstance.date))}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedInstance(null)}
-                className="rounded-full px-3 py-1 text-sm font-semibold text-muted transition duration-(--hover-ms) hover:bg-panel-cream hover:text-navy"
+                disabled={busy}
+                className="rounded-full px-3 py-1 text-sm font-semibold text-muted transition duration-(--hover-ms) hover:bg-panel-cream hover:text-navy disabled:opacity-50"
               >
                 Close
               </button>
@@ -470,20 +492,12 @@ export default function RecurringCalendar({
               />
               <QuickViewRow
                 label="Status"
-                value={
-                  selectedInstance.holdType === "TEMPLATE"
-                    ? "Vacation hold"
-                    : selectedInstance.holdType === "WEEK"
-                      ? "Skipped this week"
-                      : selectedInstance.isHeld
-                        ? "Hold active"
-                        : "Active"
-                }
+                value={holdLabel(selectedInstance) ?? "Scheduled"}
               />
               {selectedInstance.generatedOrderStatus && (
                 <QuickViewRow
                   label="Generated order"
-                  value={selectedInstance.generatedOrderStatus.replace("_", " ")}
+                  value={selectedInstance.generatedOrderStatus.replaceAll("_", " ")}
                 />
               )}
               {selectedInstance.isHeld && selectedInstance.holdReason && (
@@ -496,51 +510,53 @@ export default function RecurringCalendar({
 
             {selectedInstance.holdType !== "TEMPLATE" && !selectedInstance.isHeld && (
               <div className="mt-4">
-                <label htmlFor="hold-reason" className={label}>
+                <label htmlFor={reasonId} className={label}>
                   Reason for hold
                 </label>
                 <textarea
-                  id="hold-reason"
+                  id={reasonId}
                   rows={2}
                   value={holdReasonDraft}
                   onChange={(event) => setHoldReasonDraft(event.target.value)}
-                  placeholder="e.g. Patient in hospital until next week"
+                  disabled={busy}
                   className={input}
                 />
               </div>
             )}
 
+            {mutationError && (
+              <p role="alert" className={cn("mt-4 rounded-row p-3 text-sm", BANNER_CLASSES.error)}>
+                {mutationError}
+              </p>
+            )}
+
             <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
-              {selectedInstance.holdType === "TEMPLATE" ? (
-                <span className={cn("rounded-full px-3 py-2 text-center text-xs font-bold", TONE_CLASSES[statusTone("HOLD")])}>
-                  Vacation hold
-                </span>
-              ) : (
+              {selectedInstance.holdType !== "TEMPLATE" && (
                 <button
                   type="button"
                   onClick={() => toggleInstanceHold(selectedInstance)}
                   disabled={
-                    busyInstance === selectedInstance.id ||
+                    busy ||
                     (!selectedInstance.isHeld && !holdReasonDraft.trim())
                   }
                   className={cn(button("secondary", "sm"), "justify-center")}
                 >
-                  {busyInstance === selectedInstance.id
-                    ? "Updating..."
+                  {pendingAction === "hold"
+                    ? "Updating…"
                     : selectedInstance.holdType === "WEEK"
-                      ? "Resume Week"
-                      : selectedInstance.isHeld
-                        ? "Resume"
-                        : "Hold"}
+                    ? "Resume week"
+                    : selectedInstance.isHeld
+                      ? "Resume delivery"
+                      : "Hold delivery"}
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => deleteRecurringProfile(selectedInstance)}
-                disabled={busyInstance === selectedInstance.id}
+                disabled={busy}
                 className={button("danger", "sm")}
               >
-                {busyInstance === selectedInstance.id ? "Working..." : "Delete"}
+                {pendingAction === "delete" ? "Deleting…" : "Delete profile"}
               </button>
             </div>
           </div>
@@ -568,7 +584,7 @@ function CalendarDriverTab({
   onClick,
 }: {
   label: string;
-  count: number;
+  count: number | null;
   active: boolean;
   onClick: () => void;
 }) {
@@ -577,12 +593,10 @@ function CalendarDriverTab({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="selectable inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold active:scale-(--press-scale)"
+      className={styles.filter}
     >
-      <span className="select-dot" aria-hidden="true" />
-      <span>
-        {label} <span className="text-ink tabular-nums">({count})</span>
-      </span>
+      <span>{label}</span>
+      {count !== null && <span className={styles.filterCount}>{count}</span>}
     </button>
   );
 }
