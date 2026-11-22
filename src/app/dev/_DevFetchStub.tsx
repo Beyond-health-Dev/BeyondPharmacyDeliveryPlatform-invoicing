@@ -4,8 +4,10 @@
 // due reminders, calendar, patient search, saved addresses...) so the style
 // guide renders without a database or a signed-in session. Patched at module
 // load — before any component effect runs — and only in the browser.
+import { isHeldUntilDeliveryDay } from "@/lib/externalDispatchStatus";
 import {
   calendarInstances,
+  drivers,
   dueReminders,
   notifications,
   patients,
@@ -22,11 +24,48 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function answer(url: URL, method: string): Response {
+// New Order with Anchor for a later day: the order POST holds it and answers
+// with the dispatch summary (buildExternalDispatchResponse), so the "Anchor
+// gets this order about 6 AM..." toast can be seen.
+function heldAnchorOrder(body: unknown): Response | null {
+  let order: { assignedDriverId?: unknown; scheduledDate?: unknown } | null = null;
+  try {
+    order = typeof body === "string" ? JSON.parse(body) : null;
+  } catch {
+    return null;
+  }
+  const anchor = drivers.find((d) => d.isExternal);
+  if (
+    !order ||
+    order.assignedDriverId !== anchor?.id ||
+    typeof order.scheduledDate !== "string" ||
+    !isHeldUntilDeliveryDay(order.scheduledDate, TODAY)
+  ) {
+    return null;
+  }
+  return json(
+    {
+      external: true,
+      provider: "SPOKE",
+      externalReference: null,
+      spokePlanId: null,
+      spokeStopId: null,
+      dispatchId: "x_new",
+      status: "SCHEDULED",
+    },
+    201
+  );
+}
+
+function answer(url: URL, method: string, body: unknown): Response {
   // /api/<store>/<...rest>
   const [, , ...rest] = url.pathname.split("/").filter(Boolean);
   const path = rest.join("/");
 
+  if (method === "POST" && path === "orders") {
+    const held = heldAnchorOrder(body);
+    if (held) return held;
+  }
   if (method !== "GET" && method !== "HEAD") return json({ ok: true });
   if (path === "recurring/labels") {
     return json({ error: "Label PDFs need the real server — the style guide has no database." }, 404);
@@ -85,7 +124,7 @@ if (typeof window !== "undefined" && !(window as unknown as Record<symbol, boole
     const url = new URL(raw, window.location.origin);
     if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
       const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-      return answer(url, method);
+      return answer(url, method, init?.body);
     }
     return realFetch(input, init);
   };

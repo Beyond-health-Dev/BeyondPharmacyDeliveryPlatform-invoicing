@@ -4,6 +4,7 @@ export const SCREENS = [
   { path: "dashboard", label: "Dashboard" },
   { path: "orders", label: "Orders" },
   { path: "orders/new", label: "New order" },
+  { path: "orders/new-anchor", label: "New order (Anchor, tomorrow)" },
   { path: "recurring", label: "Recurring" },
   { path: "reminders", label: "Reminders" },
   { path: "reminder-popup", label: "Reminder popup (over the dashboard)" },

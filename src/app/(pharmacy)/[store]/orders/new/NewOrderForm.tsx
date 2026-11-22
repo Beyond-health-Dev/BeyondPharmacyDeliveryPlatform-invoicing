@@ -18,7 +18,12 @@ import {
 } from "@/lib/portalStyles";
 import { BANNER_CLASSES } from "@/lib/statusTheme";
 import { EMPTY_ADDRESS, addressFromPatient } from "@/lib/addressForm";
-import { describeDeliveryDay, type DeliveryDateDefault } from "@/lib/vancouverDate";
+import { heldOrderHint, isHeldUntilDeliveryDay } from "@/lib/externalDispatchStatus";
+import {
+  addDaysToDateKey,
+  describeDeliveryDay,
+  type DeliveryDateDefault,
+} from "@/lib/vancouverDate";
 import {
   resolveZoneSelection,
   suggestZone,
@@ -57,7 +62,10 @@ export default function NewOrderForm({
   dateDefault: DeliveryDateDefault;
 }) {
   const router = useRouter();
-  const { submit, loading, error, duplicate, clearDuplicate } = useCreateOrder(storeSlug);
+  // Vancouver's today, from the server's default: the noon rule moved that to
+  // tomorrow when nextDay is set.
+  const todayKey = dateDefault.nextDay ? addDaysToDateKey(dateDefault.dateKey, -1) : dateDefault.dateKey;
+  const { submit, loading, error, duplicate, clearDuplicate } = useCreateOrder(storeSlug, { todayKey });
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patientNameFreeText, setPatientNameFreeText] = useState("");
@@ -86,6 +94,11 @@ export default function NewOrderForm({
   );
 
   const isExternalDriver = !!drivers.find((d) => d.id === selectedDriverId)?.isExternal;
+  // An Anchor order for a later day waits here for that day's 6 AM run.
+  const anchorHint =
+    isExternalDriver && isHeldUntilDeliveryDay(scheduledDate, todayKey)
+      ? heldOrderHint(scheduledDate, todayKey)
+      : null;
 
   // Anchor: the zone is assigned automatically (its price is never invoiced).
   // In-house (Derek): pre-filled from the address, but staff confirm it —
@@ -293,12 +306,19 @@ export default function NewOrderForm({
               setScheduledDate(e.target.value);
               clearDuplicate();
             }}
-            aria-describedby={showNextDayHint ? `${fieldId}-date-hint` : undefined}
+            aria-describedby={
+              cn(showNextDayHint && `${fieldId}-date-hint`, anchorHint && `${fieldId}-anchor-hint`) || undefined
+            }
             className={input}
           />
           {showNextDayHint && (
             <p id={`${fieldId}-date-hint`} className="mt-1 text-xs font-medium text-muted">
               After 12 PM, new orders default to the next day.
+            </p>
+          )}
+          {anchorHint && (
+            <p id={`${fieldId}-anchor-hint`} className="mt-1 text-xs font-medium text-muted">
+              {anchorHint}
             </p>
           )}
         </div>

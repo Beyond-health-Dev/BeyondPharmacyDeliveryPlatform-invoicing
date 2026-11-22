@@ -5,31 +5,14 @@ import ExternalDispatchActions from "@/components/ExternalDispatchActions";
 import OrderActions from "./OrderActions";
 import {
   card,
+  cn,
   sectionTitle,
   statusBadgeClasses,
   tableHeader,
   tableRow,
 } from "@/lib/portalStyles";
 import { toneBadgeClasses } from "@/lib/statusTheme";
-
-interface SerializedOrder {
-  id: string;
-  patientName: string;
-  deliveryAddress: string;
-  deliveryCity: string;
-  scheduledDate: string;
-  deliveryZoneName: string;
-  priceAtCreation: number;
-  status: string;
-  assignedDriverId: string | null;
-  assignedDriverName: string | null;
-  cancelledAt: string | null;
-  createdAt: string;
-  isExternal: boolean;
-  externalProvider: string | null;
-  externalDispatchId: string | null;
-  canCancelExternal: boolean;
-}
+import type { SerializedOrder } from "./OrdersView";
 
 interface OrdersListProps {
   groupedOrders: Record<string, SerializedOrder[]>;
@@ -138,9 +121,13 @@ export default function OrdersList({
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <span className={statusColors[order.status] || statusBadgeClasses(order.status)}>
-                            {order.status.replace(/_/g, " ")}
+                          {/* No wrapping: the table scrolls sideways on a phone instead. */}
+                          <span className={cn(statusColors[order.status] || statusBadgeClasses(order.status), "whitespace-nowrap")}>
+                            {order.statusLabel ?? order.status.replace(/_/g, " ")}
                           </span>
+                          {order.statusNote && (
+                            <p className="mt-1 whitespace-nowrap text-xs font-medium text-muted">{order.statusNote}</p>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           {order.isExternal ? (

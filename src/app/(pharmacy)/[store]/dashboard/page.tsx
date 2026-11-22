@@ -3,6 +3,12 @@ import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import { recurringPeopleMatch } from "@/lib/recurringDuplicateGuard";
 import { getVancouverDeliveryDateInfo } from "@/lib/cron";
+import {
+  canCancelExternalDispatch,
+  externalStatusLabel,
+  externalStatusNote,
+} from "@/lib/externalDispatchStatus";
+import { vancouverHour } from "@/lib/vancouverDate";
 import type { Prisma } from "@prisma/client";
 import DashboardView, { type DashboardDelivery } from "./DashboardView";
 
@@ -14,12 +20,6 @@ type DashboardExternalDispatch = Prisma.ExternalDispatchGetPayload<{
   include: { selectedProviderUser: true };
 }>;
 
-
-const CANCELLABLE_EXTERNAL_STATUSES = new Set([
-  "PENDING",
-  "STOP_CREATED",
-  "SUBMITTED",
-]);
 
 function shouldReplaceDuplicateOrder(
   existing: DashboardOrder,
@@ -74,11 +74,14 @@ function toDashboardDelivery(order: DashboardOrder): DashboardDelivery {
     isExternal: false,
     externalDispatchId: null,
     canCancelExternal: false,
+    statusLabel: null,
+    statusNote: null,
   };
 }
 
 function toExternalDashboardDelivery(
-  dispatch: DashboardExternalDispatch
+  dispatch: DashboardExternalDispatch,
+  clock: { todayKey: string; vancouverHour: number }
 ): DashboardDelivery {
   return {
     id: `external-${dispatch.id}`,
@@ -92,9 +95,13 @@ function toExternalDashboardDelivery(
     createdAt: dispatch.createdAt,
     isExternal: true,
     externalDispatchId: dispatch.id,
-    canCancelExternal:
-      CANCELLABLE_EXTERNAL_STATUSES.has(dispatch.status) &&
-      (!dispatch.spokeStopId || dispatch.spokeStopId.startsWith("unassignedStops/")),
+    canCancelExternal: canCancelExternalDispatch(dispatch),
+    statusLabel: externalStatusLabel(dispatch.status),
+    statusNote: externalStatusNote({
+      status: dispatch.status,
+      scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
+      ...clock,
+    }),
   };
 }
 
@@ -109,9 +116,12 @@ export default async function DashboardPage({
 
   // "Today" must be Vancouver's today — server-local midnight (UTC on Vercel)
   // rolls the dashboard to the next day at ~5 PM Pacific.
-  const { dayStart: today, nextDayStart: tomorrow } = getVancouverDeliveryDateInfo();
+  const now = new Date();
+  const { dateKey: todayKey, dayStart: today, nextDayStart: tomorrow } =
+    getVancouverDeliveryDateInfo(now);
+  const clock = { todayKey, vancouverHour: vancouverHour(now) };
 
-  const [rawTodayOrders, todayExternalDispatches] = await Promise.all([
+  const [rawTodayOrders, todayExternalDispatches, heldForAnchorCount] = await Promise.all([
     prisma.order.findMany({
       where: {
         storeId: store.id,
@@ -131,11 +141,21 @@ export default async function DashboardPage({
       include: { selectedProviderUser: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
+    // Anchor orders still held for their 6 AM run, whatever their date.
+    prisma.externalDispatch.count({
+      where: { storeId: store.id, provider: "SPOKE", status: "SCHEDULED" },
+    }),
   ]);
   const todayOrders = [
     ...dedupeRecurringDashboardOrders(rawTodayOrders).map(toDashboardDelivery),
-    ...todayExternalDispatches.map(toExternalDashboardDelivery),
+    ...todayExternalDispatches.map((dispatch) => toExternalDashboardDelivery(dispatch, clock)),
   ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-  return <DashboardView storeSlug={store.slug} deliveries={todayOrders} />;
+  return (
+    <DashboardView
+      storeSlug={store.slug}
+      deliveries={todayOrders}
+      heldForAnchorCount={heldForAnchorCount}
+    />
+  );
 }

@@ -2,6 +2,8 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useToast } from "@/components/ui/ToastProvider";
+import { heldOrderSavedMessage, isHeldForRelease } from "@/lib/externalDispatchStatus";
 
 export interface CreateOrderInput {
   patientId: string | null;
@@ -26,8 +28,11 @@ export interface DuplicateBlockInfo {
   scheduledDate: string;
 }
 
-export function useCreateOrder(storeSlug: string) {
+// todayKey: Vancouver's today as the server worked it out, for the wording of
+// the "Anchor gets this order..." toast.
+export function useCreateOrder(storeSlug: string, { todayKey }: { todayKey: string }) {
   const router = useRouter();
+  const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   // Set when the server 409'd because a same-day delivery already exists —
@@ -74,6 +79,13 @@ export function useCreateOrder(storeSlug: string) {
         });
 
         if (res.ok) {
+          // An Anchor order for a later day is held until 6 AM that day; say
+          // so, and that it can still be cancelled. The toast outlives the
+          // navigation (ToastProvider sits in the root layout).
+          const saved = await res.json().catch(() => null);
+          if (saved?.external === true && typeof saved.status === "string" && isHeldForRelease(saved.status)) {
+            toast.success(heldOrderSavedMessage(input.scheduledDate, todayKey));
+          }
           // Deliberately keep loading/inFlight set: navigation to the orders
           // page is still in flight, and re-arming the button in that window
           // is how a same-tab double submission mints a duplicate delivery.
@@ -109,7 +121,7 @@ export function useCreateOrder(storeSlug: string) {
       inFlight.current = false;
       setLoading(false);
     },
-    [storeSlug, router]
+    [storeSlug, router, toast, todayKey]
   );
 
   return { submit, loading, error, duplicate, clearDuplicate };

@@ -2,15 +2,16 @@ import { prisma } from "@/lib/db";
 import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import type { Prisma } from "@prisma/client";
+import { getVancouverDeliveryDateInfo } from "@/lib/cron";
+import {
+  canCancelExternalDispatch,
+  externalStatusLabel,
+  externalStatusNote,
+} from "@/lib/externalDispatchStatus";
+import { externalStatusWhere, orderStatusWhere } from "@/lib/orderFilters";
+import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
+import { vancouverHour } from "@/lib/vancouverDate";
 import OrdersView, { type SerializedOrder } from "./OrdersView";
-
-
-const CANCELLABLE_EXTERNAL_STATUSES = new Set([
-  "PENDING",
-  "STOP_CREATED",
-  "SUBMITTED",
-]);
-
 
 export default async function OrdersPage({
   params,
@@ -31,9 +32,12 @@ export default async function OrdersPage({
   // Hide cancelled orders older than 24 hours (they're past the cooldown window)
   const now = new Date();
   const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  // Vancouver's today, for the "Not confirmed" filter and the row notes.
+  const { dateKey: todayKey, dayStart: todayStart } = getVancouverDeliveryDateInfo(now);
+  const hour = vancouverHour(now);
   const where: Prisma.OrderWhereInput = {
     storeId: store.id,
-    ...(status ? { status } : {}),
+    ...orderStatusWhere(status),
     ...(search ? { patientName: { contains: search, mode: "insensitive" as const } } : {}),
     // Exclude cancelled orders whose cancelledAt is older than 24h
     NOT: {
@@ -41,19 +45,10 @@ export default async function OrdersPage({
       cancelledAt: { lt: twentyFourHoursAgo },
     },
   };
-  const externalStatusWhere: Prisma.ExternalDispatchWhereInput =
-    status === "FAILED"
-      ? { status: { in: ["DELIVERY_FAILED", "DISPATCH_FAILED"] } }
-      : status
-        ? { status }
-        : // Failed handoffs must stay visible in the default view — hiding them
-          // makes the delivery look "never entered" and invites a duplicate
-          // re-entry. Recovery is the row's "Retry Spoke" action.
-          {};
   const externalWhere: Prisma.ExternalDispatchWhereInput = {
     storeId: store.id,
     provider: "SPOKE",
-    ...externalStatusWhere,
+    ...externalStatusWhere(status, todayStart),
     ...(search
       ? { patientName: { contains: search, mode: "insensitive" as const } }
       : {}),
@@ -96,6 +91,8 @@ export default async function OrdersPage({
       externalProvider: null,
       externalDispatchId: null,
       canCancelExternal: false,
+      statusLabel: null,
+      statusNote: null,
     })),
     ...externalDispatches.map((dispatch) => ({
       id: `external-${dispatch.id}`,
@@ -113,9 +110,14 @@ export default async function OrdersPage({
       isExternal: true,
       externalProvider: "Spoke",
       externalDispatchId: dispatch.id,
-      canCancelExternal:
-        CANCELLABLE_EXTERNAL_STATUSES.has(dispatch.status) &&
-        (!dispatch.spokeStopId || dispatch.spokeStopId.startsWith("unassignedStops/")),
+      canCancelExternal: canCancelExternalDispatch(dispatch),
+      statusLabel: externalStatusLabel(dispatch.status),
+      statusNote: externalStatusNote({
+        status: dispatch.status,
+        scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
+        todayKey,
+        vancouverHour: hour,
+      }),
     })),
   ]
     .sort((a, b) => {
@@ -152,7 +154,11 @@ export default async function OrdersPage({
       orderCount={serializedOrders.length}
       groupedOrders={serializedGroups}
       sortedDateKeys={sortedDateKeys}
-      drivers={drivers.map((d) => ({ id: d.id, name: d.name }))}
+      // Assign Driver is for in-house drivers only: an order assigned to
+      // Anchor here would never reach Anchor (the server refuses it too).
+      drivers={drivers
+        .filter((d) => !isSelectedSpokeProvider(d.id))
+        .map((d) => ({ id: d.id, name: d.name }))}
     />
   );
 }

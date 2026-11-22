@@ -2,6 +2,7 @@ import Link from "next/link";
 import OrdersPoller from "./OrdersPoller";
 import OrdersList from "./OrdersList";
 import PageHeader from "@/components/ui/PageHeader";
+import { ANCHOR_ORDER_FILTERS } from "@/lib/orderFilters";
 import {
   cn,
   ctaShadow,
@@ -27,6 +28,13 @@ export const ORDER_STATUS_FILTERS = [
   "CANCELLED",
 ];
 
+// Every pill: the status filters by name, then the Anchor-only ones
+// (src/lib/orderFilters.ts), which read in plain words.
+const FILTER_PILLS = [
+  ...ORDER_STATUS_FILTERS.map((key) => ({ key, label: key.replace(/_/g, " ") })),
+  ...ANCHOR_ORDER_FILTERS,
+];
+
 export type SerializedOrder = {
   id: string;
   patientName: string;
@@ -44,6 +52,10 @@ export type SerializedOrder = {
   externalProvider: string | null;
   externalDispatchId: string | null;
   canCancelExternal: boolean;
+  // Anchor rows only (null in-house), worked out on the server: the badge
+  // text, and a short line under it such as when Anchor gets the order.
+  statusLabel: string | null;
+  statusNote: string | null;
 };
 
 // Presentational orders screen; the page supplies the data. Kept separate so
@@ -113,16 +125,16 @@ export default function OrdersView({
           <span className="select-dot" aria-hidden="true" />
           All ({total})
         </Link>
-        {ORDER_STATUS_FILTERS.map(
-          (s) => (
+        {FILTER_PILLS.map(
+          ({ key, label }) => (
             <Link
-              key={s}
-              href={`/${storeSlug}/orders?status=${s}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
-              aria-current={status === s ? "page" : undefined}
+              key={key}
+              href={`/${storeSlug}/orders?status=${key}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
+              aria-current={status === key ? "page" : undefined}
               className={cn(selectablePill, "inline-flex items-center gap-2")}
             >
               <span className="select-dot" aria-hidden="true" />
-              {s.replace(/_/g, " ")}
+              {label}
             </Link>
           )
         )}

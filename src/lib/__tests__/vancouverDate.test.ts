@@ -5,6 +5,7 @@ import {
   deliveryDateDefault,
   deliveryDayRange,
   describeDeliveryDay,
+  describeDeliveryDayFrom,
   invoiceNumberPrefix,
   vancouverTodayKey,
   vancouverWeekRange,
@@ -89,6 +90,15 @@ describe("describeDeliveryDay", () => {
   it("names any other day without shifting it a day", () => {
     expect(describeDeliveryDay("2026-10-12", now)).toBe("on Mon, Oct 12");
     expect(describeDeliveryDay("2026-10-06", now)).toBe("on Tue, Oct 6");
+  });
+});
+
+describe("describeDeliveryDayFrom (today handed down from the server)", () => {
+  it("words the day against the given today, not the clock", () => {
+    expect(describeDeliveryDayFrom("2026-10-07", "2026-10-07")).toBe("today");
+    expect(describeDeliveryDayFrom("2026-10-08", "2026-10-07")).toBe("tomorrow");
+    expect(describeDeliveryDayFrom("2026-10-12", "2026-10-07")).toBe("on Mon, Oct 12");
+    expect(describeDeliveryDayFrom("2027-01-04", "2026-12-31")).toBe("on Mon, Jan 4, 2027");
   });
 });
 

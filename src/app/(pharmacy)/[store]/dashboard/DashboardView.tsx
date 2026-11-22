@@ -2,6 +2,8 @@ import Link from "next/link";
 import ExternalDispatchActions from "@/components/ExternalDispatchActions";
 import NotificationPanel from "@/components/NotificationPanel";
 import PageHeader from "@/components/ui/PageHeader";
+import { FAILED_EXTERNAL_STATUSES } from "@/lib/externalDispatchStatus";
+import { WAITING_FILTER } from "@/lib/orderFilters";
 import {
   card,
   cn,
@@ -14,8 +16,12 @@ import {
   statusBadgeClasses,
   tableHeader,
   tableRow,
+  textLink,
 } from "@/lib/portalStyles";
 import { toneBadgeClasses } from "@/lib/statusTheme";
+
+// An in-house failure, or an Anchor order that failed or never reached Anchor.
+const FAILED_STATUSES = new Set(["FAILED", ...FAILED_EXTERNAL_STATUSES]);
 
 export type DashboardDelivery = {
   id: string;
@@ -30,6 +36,9 @@ export type DashboardDelivery = {
   isExternal: boolean;
   externalDispatchId: string | null;
   canCancelExternal: boolean;
+  // Anchor rows only (null in-house), worked out on the server.
+  statusLabel: string | null;
+  statusNote: string | null;
 };
 
 // Presentational dashboard; the page supplies the data. Kept separate so the
@@ -37,9 +46,12 @@ export type DashboardDelivery = {
 export default function DashboardView({
   storeSlug,
   deliveries,
+  heldForAnchorCount,
 }: {
   storeSlug: string;
   deliveries: DashboardDelivery[];
+  // Anchor orders waiting for their 6 AM run (any date).
+  heldForAnchorCount: number;
 }) {
   return (
     <div>
@@ -54,6 +66,14 @@ export default function DashboardView({
           + New Order
         </Link>
       </PageHeader>
+
+      {heldForAnchorCount > 0 && (
+        <p className="-mt-4 mb-6 text-sm">
+          <Link href={`/${storeSlug}/orders?status=${WAITING_FILTER}`} className={textLink}>
+            {heldForAnchorCount} {heldForAnchorCount === 1 ? "order" : "orders"} waiting to go to Anchor
+          </Link>
+        </p>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Today's Orders */}
@@ -91,55 +111,64 @@ export default function DashboardView({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hairline">
-                  {deliveries.map((order) => (
-                    <tr
-                      key={order.id}
-                      className={`${tableRow} ${
-                        order.status === "FAILED" ? "bg-blush" : ""
-                      }`}
-                    >
-                      <td className="px-6 py-4 text-sm font-semibold text-navy">
-                        {order.patientName}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-ink">
-                        {order.deliveryAddress}, {order.deliveryCity}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-ink">
-                        <span>{order.driverName || "Unassigned"}</span>
-                        {order.isExternal && (
-                          <span className="ml-2 inline-flex rounded-full bg-blue px-2 py-0.5 text-xs font-bold text-navy">
-                            Spoke
+                  {deliveries.map((order) => {
+                    const failed = FAILED_STATUSES.has(order.status);
+                    return (
+                      <tr
+                        key={order.id}
+                        className={`${tableRow} ${failed ? "bg-blush" : ""}`}
+                      >
+                        <td className="px-6 py-4 text-sm font-semibold text-navy">
+                          {order.patientName}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-ink">
+                          {order.deliveryAddress}, {order.deliveryCity}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-ink">
+                          <span>{order.driverName || "Unassigned"}</span>
+                          {order.isExternal && (
+                            <span className="ml-2 inline-flex rounded-full bg-blue px-2 py-0.5 text-xs font-bold text-navy">
+                              Spoke
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
+                          {/* On the blush failed row, the chip turns white to stay visible.
+                              No wrapping: the table scrolls sideways on a phone instead. */}
+                          <span className={cn(failed ? toneBadgeClasses("white") : statusBadgeClasses(order.status), "whitespace-nowrap")}>
+                            {order.statusLabel ?? order.status.replace(/_/g, " ")}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {/* On the blush failed row, the chip turns white to stay visible. */}
-                        <span className={order.status === "FAILED" ? toneBadgeClasses("white") : statusBadgeClasses(order.status)}>
-                          {order.status.replace(/_/g, " ")}
-                        </span>
-                        {order.status === "FAILED" && order.failedReason && (
-                          <p className="text-xs text-danger mt-1">
-                            {order.failedReason}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-sm font-semibold text-navy tabular-nums">
-                        ${order.priceAtCreation.toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4">
-                        {order.isExternal ? (
-                          <ExternalDispatchActions
-                            dispatchId={order.externalDispatchId}
-                            currentStatus={order.status}
-                            canCancel={order.canCancelExternal}
-                            storeSlug={storeSlug}
-                          />
-                        ) : (
-                          <span className="text-xs text-ink">-</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                          {order.statusNote && (
+                            <p className={cn("mt-1 whitespace-nowrap text-xs font-medium", failed ? "text-navy" : "text-muted")}>
+                              {order.statusNote}
+                            </p>
+                          )}
+                          {/* Anchor's error text is technical, so only a driver's reason shows. */}
+                          {order.status === "FAILED" && order.failedReason && (
+                            <p className="text-xs text-danger mt-1">
+                              {order.failedReason}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-semibold text-navy tabular-nums">
+                          ${order.priceAtCreation.toFixed(2)}
+                        </td>
+                        <td className="px-6 py-4">
+                          {order.isExternal ? (
+                            <ExternalDispatchActions
+                              dispatchId={order.externalDispatchId}
+                              currentStatus={order.status}
+                              canCancel={order.canCancelExternal}
+                              storeSlug={storeSlug}
+                              onAttentionRow={failed}
+                            />
+                          ) : (
+                            <span className="text-xs text-ink">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

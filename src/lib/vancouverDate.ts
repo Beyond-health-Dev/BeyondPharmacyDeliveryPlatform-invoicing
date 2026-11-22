@@ -100,7 +100,12 @@ export function deliveryDateDefault(now: Date = new Date()): DeliveryDateDefault
 
 /** "today", "tomorrow" or "on Thu, Oct 8" — for messages about a delivery day. */
 export function describeDeliveryDay(dateKey: string, now: Date = new Date()) {
-  const today = vancouverTodayKey(now);
+  return describeDeliveryDayFrom(dateKey, vancouverTodayKey(now));
+}
+
+// The same, against a today (YYYY-MM-DD) the server worked out, so a browser
+// showing the words never consults its own clock.
+export function describeDeliveryDayFrom(dateKey: string, today: string) {
   if (dateKey === today) return "today";
   if (dateKey === addDaysToDateKey(today, 1)) return "tomorrow";
   const label = new Date(`${dateKey}T00:00:00.000Z`).toLocaleDateString("en-US", {

@@ -103,6 +103,9 @@ export const linkButton =
   "font-semibold text-green-link transition-colors duration-(--hover-ms) hover:text-navy disabled:opacity-50";
 export const dangerLinkButton =
   "font-semibold text-danger transition-opacity duration-(--hover-ms) hover:opacity-75 disabled:opacity-50";
+// linkButton on a blush (failed) row, where the green falls under 4.5:1.
+export const attentionLinkButton =
+  "font-semibold text-navy underline underline-offset-2 transition-opacity duration-(--hover-ms) hover:opacity-75 disabled:opacity-50";
 
 // ---- Selectable rows / tabs / filters (see .selectable in theme.css) ----
 

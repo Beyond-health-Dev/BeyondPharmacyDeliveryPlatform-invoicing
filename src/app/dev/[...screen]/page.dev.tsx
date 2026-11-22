@@ -53,7 +53,11 @@ function renderScreen(path: string) {
     case "reminder-popup":
       return (
         <Pharmacy>
-          <DashboardView storeSlug={slug} deliveries={fx.dashboardDeliveries} />
+          <DashboardView
+            storeSlug={slug}
+            deliveries={fx.dashboardDeliveries}
+            heldForAnchorCount={fx.heldForAnchorCount}
+          />
         </Pharmacy>
       );
     case "orders":
@@ -68,7 +72,8 @@ function renderScreen(path: string) {
             orderCount={fx.orderCount}
             groupedOrders={fx.groupedOrders}
             sortedDateKeys={fx.sortedDateKeys}
-            drivers={fx.drivers}
+            // As the page does: Assign Driver never offers Anchor.
+            drivers={fx.drivers.filter((d) => !d.isExternal)}
             poll={false}
           />
         </Pharmacy>
@@ -83,6 +88,21 @@ function renderScreen(path: string) {
             zoneHistory={fx.zoneHistory}
             fallbackZoneId="z_surrey"
             dateDefault={deliveryDateDefault()}
+          />
+        </Pharmacy>
+      );
+    // Anchor is preselected; dated tomorrow, the order would be held for
+    // tomorrow's 6 AM run, so the hint under the date shows.
+    case "orders/new-anchor":
+      return (
+        <Pharmacy>
+          <NewOrderView
+            storeSlug={slug}
+            zones={fx.activeZones}
+            drivers={fx.drivers}
+            zoneHistory={fx.zoneHistory}
+            fallbackZoneId="z_surrey"
+            dateDefault={{ dateKey: fx.day(1), nextDay: true }}
           />
         </Pharmacy>
       );
