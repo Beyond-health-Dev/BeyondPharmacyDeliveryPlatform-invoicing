@@ -30,8 +30,8 @@ const STATUS_TONES: Record<string, Tone> = {
   DELIVERED: "mint",
   FAILED: "blush",
   CANCELLED: "off",
-  // Spoke dispatch
-  SCHEDULED: "blue",
+  // Spoke dispatch. Held for its 6 AM run: waiting, like PENDING.
+  SCHEDULED: "butter",
   SUBMITTED: "blue",
   PLAN_CREATED: "blue",
   STOP_CREATED: "blue",
@@ -90,8 +90,27 @@ const FAILURE_NOTIFICATIONS = new Set([
   "DELIVERY_FAILED",
   "SPOKE_DISPATCH_FAILED",
   "SPOKE_DISPATCH_STALLED",
+  "SPOKE_CANCEL_INCOMPLETE",
   "GENERATION_INCOMPLETE",
 ]);
+
+// The badge title of each kind of store notification the app creates. A kind
+// missing here reads "Notice" (src/lib/__tests__/notificationTitles.test.ts
+// checks every kind the code creates is listed).
+export const NOTIFICATION_TITLES: Record<string, string> = {
+  DELIVERY_FAILED: "Delivery Failed",
+  DELIVERY_REATTEMPT: "Re-attempt Started",
+  SPOKE_DISPATCH_FAILED: "Spoke Dispatch Failed",
+  SPOKE_DISPATCH_STALLED: "Spoke Delivery Stalled",
+  SPOKE_CANCEL_INCOMPLETE: "Remove from Anchor",
+  GENERATION_INCOMPLETE: "Generation Incomplete",
+  ORDER_PICKED_UP: "Order Picked Up",
+  BATCH_DELIVERED: "Batch Delivered",
+};
+
+export function notificationTitle(type: string) {
+  return NOTIFICATION_TITLES[type] ?? "Notice";
+}
 
 // `unread` is the row fill while a notification is still new.
 export function notificationStyle(type: string): { badge: string; marker: string; unread: string } {

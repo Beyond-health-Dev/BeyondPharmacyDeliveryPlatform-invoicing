@@ -79,7 +79,7 @@ describe("isRecurringScheduleDue", () => {
 });
 
 describe("formatGenerationMessage", () => {
-  const base = { dateKey: "2026-07-15", total: 10, due: 5, created: 0, existing: 0, skipped: 0, unprocessed: 0 };
+  const base = { dateKey: "2026-07-15", released: 0, total: 10, due: 5, created: 0, existing: 0, skipped: 0, unprocessed: 0 };
 
   it("prioritizes the time-limit continuation message", () => {
     expect(formatGenerationMessage({ ...base, created: 3, unprocessed: 7 })).toContain("7 profile(s) remaining");
@@ -89,5 +89,18 @@ describe("formatGenerationMessage", () => {
     expect(formatGenerationMessage({ ...base, created: 2 })).toContain("2 orders generated");
     expect(formatGenerationMessage({ ...base, existing: 4 })).toContain("already been generated");
     expect(formatGenerationMessage(base)).toContain("No recurring orders");
+  });
+
+  it("says first how many waiting Anchor orders the run sent", () => {
+    expect(formatGenerationMessage({ ...base, released: 2, existing: 4 })).toBe(
+      "2 waiting Anchor orders sent. Today's recurring orders have already been generated."
+    );
+    expect(formatGenerationMessage({ ...base, released: 1 })).toBe(
+      "1 waiting Anchor order sent. No recurring orders are due today."
+    );
+    expect(formatGenerationMessage({ ...base, released: 1, created: 3, unprocessed: 7 })).toMatch(
+      /^1 waiting Anchor order sent\. 3 orders generated before the time limit/
+    );
+    expect(formatGenerationMessage({ ...base, created: 2 })).toBe("2 orders generated for today.");
   });
 });

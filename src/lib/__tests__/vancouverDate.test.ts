@@ -5,6 +5,7 @@ import {
   deliveryDateDefault,
   deliveryDayRange,
   describeDeliveryDay,
+  describeDeliveryDayFrom,
   invoiceNumberPrefix,
   vancouverTodayKey,
   vancouverWeekRange,
@@ -64,13 +65,14 @@ describe("defaultDeliveryDateKey (orders entered from noon go out tomorrow)", ()
   });
 
   it("rolls over the month and year", () => {
-    expect(defaultDeliveryDateKey(new Date("2026-12-31T21:00:00Z"))).toBe("2027-01-01"); // 1 PM PST
+    expect(defaultDeliveryDateKey(new Date("2026-12-31T21:00:00Z"))).toBe("2027-01-01"); // 2 PM (UTC-7)
   });
 
   it("does it on daylight-saving change days too", () => {
-    // Nov 1 2026: clocks fall back at 2 AM; noon PST is 20:00 UTC.
-    expect(defaultDeliveryDateKey(new Date("2026-11-01T19:59:00Z"))).toBe("2026-11-01");
-    expect(defaultDeliveryDateKey(new Date("2026-11-01T20:00:00Z"))).toBe("2026-11-02");
+    // Nov 2 2025: clocks fell back at 2 AM; noon PST is 20:00 UTC. (BC kept
+    // UTC-7 from Nov 2026, so that was the last fall-back day.)
+    expect(defaultDeliveryDateKey(new Date("2025-11-02T19:59:00Z"))).toBe("2025-11-02");
+    expect(defaultDeliveryDateKey(new Date("2025-11-02T20:00:00Z"))).toBe("2025-11-03");
     // Mar 8 2026: clocks spring forward; noon PDT is 19:00 UTC.
     expect(defaultDeliveryDateKey(new Date("2026-03-08T18:59:00Z"))).toBe("2026-03-08");
     expect(defaultDeliveryDateKey(new Date("2026-03-08T19:00:00Z"))).toBe("2026-03-09");
@@ -91,6 +93,15 @@ describe("describeDeliveryDay", () => {
   });
 });
 
+describe("describeDeliveryDayFrom (today handed down from the server)", () => {
+  it("words the day against the given today, not the clock", () => {
+    expect(describeDeliveryDayFrom("2026-10-07", "2026-10-07")).toBe("today");
+    expect(describeDeliveryDayFrom("2026-10-08", "2026-10-07")).toBe("tomorrow");
+    expect(describeDeliveryDayFrom("2026-10-12", "2026-10-07")).toBe("on Mon, Oct 12");
+    expect(describeDeliveryDayFrom("2027-01-04", "2026-12-31")).toBe("on Mon, Jan 4, 2027");
+  });
+});
+
 describe("deliveryDateDefault (handed from the server to the order form)", () => {
   it("flags when the noon rule moved the date", () => {
     expect(deliveryDateDefault(new Date("2026-10-07T18:00:00Z"))).toEqual({ dateKey: "2026-10-07", nextDay: false });
@@ -100,7 +111,7 @@ describe("deliveryDateDefault (handed from the server to the order form)", () =>
 
 describe("describeDeliveryDay across a year end", () => {
   it("adds the year only when it differs", () => {
-    const newYearsEve = new Date("2026-12-31T20:00:00Z"); // Dec 31, 12 PM PST
+    const newYearsEve = new Date("2026-12-31T20:00:00Z"); // Dec 31, 1 PM (UTC-7)
     expect(describeDeliveryDay("2027-01-01", newYearsEve)).toBe("tomorrow");
     expect(describeDeliveryDay("2027-01-04", newYearsEve)).toBe("on Mon, Jan 4, 2027");
     expect(describeDeliveryDay("2026-12-28", newYearsEve)).toBe("on Mon, Dec 28");
@@ -145,17 +156,17 @@ describe("vancouverWeekStartKey (recurring calendar and skips)", () => {
   });
 
   it("keeps Saturday evening in the current week (PST)", () => {
-    // Sat Nov 28, 4:30 PM and 11 PM PST; Sun Nov 29, 12:30 AM PST.
-    expect(vancouverWeekStartKey(new Date("2026-11-29T00:30:00Z"))).toBe("2026-11-22");
-    expect(vancouverWeekStartKey(new Date("2026-11-29T07:00:00Z"))).toBe("2026-11-22");
-    expect(vancouverWeekStartKey(new Date("2026-11-29T08:30:00Z"))).toBe("2026-11-29");
+    // Sat Jan 17 2026, 4:30 PM and 11 PM PST; Sun Jan 18, 12:30 AM PST.
+    expect(vancouverWeekStartKey(new Date("2026-01-18T00:30:00Z"))).toBe("2026-01-11");
+    expect(vancouverWeekStartKey(new Date("2026-01-18T07:00:00Z"))).toBe("2026-01-11");
+    expect(vancouverWeekStartKey(new Date("2026-01-18T08:30:00Z"))).toBe("2026-01-18");
   });
 
   it("turns over at Vancouver midnight on the daylight-saving Sundays", () => {
-    // Clocks go back on Sun Nov 1: Sat 11:30 PM PDT, then 1:30 AM PDT and PST.
-    expect(vancouverWeekStartKey(new Date("2026-11-01T06:30:00Z"))).toBe("2026-10-25");
-    expect(vancouverWeekStartKey(new Date("2026-11-01T08:30:00Z"))).toBe("2026-11-01");
-    expect(vancouverWeekStartKey(new Date("2026-11-01T09:30:00Z"))).toBe("2026-11-01");
+    // Clocks went back on Sun Nov 2 2025: Sat 11:30 PM PDT, then 1:30 AM PDT and PST.
+    expect(vancouverWeekStartKey(new Date("2025-11-02T06:30:00Z"))).toBe("2025-10-26");
+    expect(vancouverWeekStartKey(new Date("2025-11-02T08:30:00Z"))).toBe("2025-11-02");
+    expect(vancouverWeekStartKey(new Date("2025-11-02T09:30:00Z"))).toBe("2025-11-02");
     // Clocks go forward on Sun Mar 8: Sat 11:30 PM PST, then 3:30 AM PDT.
     expect(vancouverWeekStartKey(new Date("2026-03-08T07:30:00Z"))).toBe("2026-03-01");
     expect(vancouverWeekStartKey(new Date("2026-03-08T10:30:00Z"))).toBe("2026-03-08");
@@ -163,7 +174,7 @@ describe("vancouverWeekStartKey (recurring calendar and skips)", () => {
 
   it("handles weekday evenings and a week spanning the new year", () => {
     expect(vancouverWeekStartKey(new Date("2026-10-22T03:00:00Z"))).toBe("2026-10-18"); // Wed 8 PM PDT
-    expect(vancouverWeekStartKey(new Date("2027-01-03T07:00:00Z"))).toBe("2026-12-27"); // Sat Jan 2, 11 PM PST
+    expect(vancouverWeekStartKey(new Date("2026-01-04T07:00:00Z"))).toBe("2025-12-28"); // Sat Jan 3 2026, 11 PM PST
   });
 });
 
@@ -179,7 +190,7 @@ describe("vancouverWeekRange", () => {
 describe("invoiceNumberPrefix", () => {
   it("numbers by Vancouver's month on a month's last evening", () => {
     expect(invoiceNumberPrefix(new Date("2026-11-01T01:00:00Z"))).toBe("INV-2026-10"); // Oct 31, 6 PM PDT
-    expect(invoiceNumberPrefix(new Date("2027-01-01T02:00:00Z"))).toBe("INV-2026-12"); // Dec 31, 6 PM PST
+    expect(invoiceNumberPrefix(new Date("2027-01-01T02:00:00Z"))).toBe("INV-2026-12"); // Dec 31, 7 PM (UTC-7)
     expect(invoiceNumberPrefix(new Date("2026-11-01T08:00:00Z"))).toBe("INV-2026-11"); // Nov 1, 1 AM PDT
   });
 });

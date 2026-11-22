@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { card, cn, emptyState, sectionTitle } from "@/lib/portalStyles";
-import { notificationStyle, toneBadgeClasses } from "@/lib/statusTheme";
+import { card, cn, emptyState, sectionTitle, tintedLinkButton } from "@/lib/portalStyles";
+import { notificationStyle, notificationTitle, toneBadgeClasses } from "@/lib/statusTheme";
 
 interface Notification {
   id: string;
@@ -83,19 +83,7 @@ export default function NotificationPanel({ storeSlug }: { storeSlug: string }) 
                         className={`inline-block w-2 h-2 rounded-full ${style.marker}`}
                       />
                       <span className={n.isRead ? style.badge : toneBadgeClasses("white")}>
-                        {n.type === "DELIVERY_FAILED"
-                          ? "Delivery Failed"
-                          : n.type === "SPOKE_DISPATCH_FAILED"
-                          ? "Spoke Dispatch Failed"
-                          : n.type === "SPOKE_DISPATCH_STALLED"
-                          ? "Spoke Delivery Stalled"
-                          : n.type === "GENERATION_INCOMPLETE"
-                          ? "Generation Incomplete"
-                          : n.type === "ORDER_PICKED_UP"
-                          ? "Order Picked Up"
-                          : n.type === "BATCH_DELIVERED"
-                          ? "Batch Delivered"
-                        : "Re-attempt Started"}
+                        {notificationTitle(n.type)}
                       </span>
                     </div>
                     <p className={cn("text-sm mt-2", n.isRead ? "text-ink" : "text-navy")}>{n.message}</p>
@@ -106,7 +94,7 @@ export default function NotificationPanel({ storeSlug }: { storeSlug: string }) 
                   {!n.isRead && (
                     <button
                       onClick={() => markAsRead(n.id)}
-                      className="text-xs text-navy font-bold underline-offset-2 hover:underline ml-3 whitespace-nowrap"
+                      className={cn(tintedLinkButton, "ml-3 whitespace-nowrap text-xs")}
                     >
                       Dismiss
                     </button>

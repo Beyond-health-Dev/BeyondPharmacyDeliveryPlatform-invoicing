@@ -16,6 +16,7 @@ import {
   SpokeDispatchError,
 } from "@/lib/spoke";
 import {
+  alreadySavedConflict,
   buildExternalDispatchResponse,
   dispatchOrderToSpoke,
   scheduleDeferredSpokeDispatch,
@@ -404,6 +405,14 @@ export async function POST(
           return { patientId: finalPatientId, deliveryAddressId: finalAddressId };
         },
       });
+
+      // The same save again after the order was cancelled, or cancelled
+      // while this save sent it: nothing is saved. Answered 409 by the catch
+      // below with the message a cancelled held order gets, and the form
+      // starts a new request.
+      if (result.alreadyDispatched && result.dispatch.status === "CANCELLED") {
+        throw alreadySavedConflict(result.dispatch);
+      }
 
       return NextResponse.json(
         buildExternalDispatchResponse(result.dispatch),

@@ -49,7 +49,7 @@ describe("POST /api/[store]/orders/batch-deliver", () => {
   // day's orders, not tomorrow's (UTC is a day ahead from ~5 PM Pacific).
   it.each([
     ["Wed 5:30 PM PDT", "2026-10-22T00:30:00Z", "2026-10-21", "2026-10-22"],
-    ["Fri 4:30 PM PST", "2026-11-28T00:30:00Z", "2026-11-27", "2026-11-28"],
+    ["Fri Jan 30, 4:30 PM PST", "2026-01-31T00:30:00Z", "2026-01-30", "2026-01-31"],
     ["Wed 9 AM PDT", "2026-10-21T16:00:00Z", "2026-10-21", "2026-10-22"],
     ["Sat Oct 31, 11 PM PDT", "2026-11-01T06:00:00Z", "2026-10-31", "2026-11-01"],
   ])("delivers Vancouver's today at %s", async (_label, now, today, tomorrow) => {

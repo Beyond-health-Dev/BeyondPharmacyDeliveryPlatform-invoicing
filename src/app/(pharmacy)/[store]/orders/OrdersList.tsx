@@ -5,31 +5,14 @@ import ExternalDispatchActions from "@/components/ExternalDispatchActions";
 import OrderActions from "./OrderActions";
 import {
   card,
+  cn,
   sectionTitle,
   statusBadgeClasses,
   tableHeader,
   tableRow,
 } from "@/lib/portalStyles";
 import { toneBadgeClasses } from "@/lib/statusTheme";
-
-interface SerializedOrder {
-  id: string;
-  patientName: string;
-  deliveryAddress: string;
-  deliveryCity: string;
-  scheduledDate: string;
-  deliveryZoneName: string;
-  priceAtCreation: number;
-  status: string;
-  assignedDriverId: string | null;
-  assignedDriverName: string | null;
-  cancelledAt: string | null;
-  createdAt: string;
-  isExternal: boolean;
-  externalProvider: string | null;
-  externalDispatchId: string | null;
-  canCancelExternal: boolean;
-}
+import type { SerializedOrder } from "./OrdersView";
 
 interface OrdersListProps {
   groupedOrders: Record<string, SerializedOrder[]>;
@@ -138,9 +121,22 @@ export default function OrdersList({
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <span className={statusColors[order.status] || statusBadgeClasses(order.status)}>
-                            {order.status.replace(/_/g, " ")}
+                          {/* No wrapping: the table scrolls sideways on a phone instead. */}
+                          {/* A held order that missed its send looks like a failed one. */}
+                          <span
+                            className={cn(
+                              order.needsAttention
+                                ? statusBadgeClasses("FAILED")
+                                : statusColors[order.status] || statusBadgeClasses(order.status),
+                              "whitespace-nowrap"
+                            )}
+                          >
+                            {order.statusLabel ?? order.status.replace(/_/g, " ")}
                           </span>
+                          {/* Notes can run to two sentences: they wrap, the badge doesn't. */}
+                          {order.statusNote && (
+                            <p className="mt-1 min-w-48 max-w-64 text-xs font-medium text-muted">{order.statusNote}</p>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           {order.isExternal ? (
@@ -148,7 +144,9 @@ export default function OrdersList({
                               dispatchId={order.externalDispatchId}
                               currentStatus={order.status}
                               canCancel={order.canCancelExternal}
+                              hasAnchorStop={order.hasAnchorStop}
                               storeSlug={storeSlug}
+                              patientName={order.patientName}
                             />
                           ) : (
                             <OrderActions

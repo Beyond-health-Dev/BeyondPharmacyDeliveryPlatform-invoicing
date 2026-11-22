@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
+import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { resolveStore } from "@/lib/store";
 
 export async function PATCH(
@@ -57,7 +58,34 @@ export async function PATCH(
     }
     updateData.status = body.status;
   }
-  if (body.assignedDriverId) updateData.assignedDriverId = body.assignedDriverId;
+  // Only an active in-house driver of this store can be assigned here. An
+  // order assigned to Anchor this way would never reach Anchor: Anchor orders
+  // are sent to Spoke when they are created from New Order.
+  if (body.assignedDriverId) {
+    if (typeof body.assignedDriverId !== "string") {
+      return NextResponse.json({ error: "Invalid driver" }, { status: 400 });
+    }
+    if (isSelectedSpokeProvider(body.assignedDriverId)) {
+      return NextResponse.json(
+        {
+          error:
+            "Anchor can't be assigned from here, because the order would never reach Anchor. Create Anchor orders from New Order.",
+        },
+        { status: 400 }
+      );
+    }
+    const driver = await prisma.user.findUnique({
+      where: { id: body.assignedDriverId },
+      select: { role: true, isActive: true, storeId: true },
+    });
+    if (!driver || driver.role !== "DRIVER" || !driver.isActive || driver.storeId !== store.id) {
+      return NextResponse.json(
+        { error: "That driver isn't an active driver at this store. Choose another driver." },
+        { status: 400 }
+      );
+    }
+    updateData.assignedDriverId = body.assignedDriverId;
+  }
 
   // Set cancelledAt timestamp when cancelling an order (Stage 1 of soft delete);
   // clear it when an order is moved back out of CANCELLED.

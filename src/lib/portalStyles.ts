@@ -98,11 +98,18 @@ export const dangerButton = button("danger");
 export const softButton =
   "rounded-full bg-panel-cream px-4 py-2 text-sm font-bold text-navy transition duration-(--hover-ms) ease-out hover:bg-blue active:scale-(--press-scale) disabled:opacity-50";
 
-// Small inline actions inside rows and tables.
+// Small inline actions inside rows and tables. While a request runs they are
+// aria-disabled rather than disabled, so keyboard focus stays on them.
+const LINK_BUTTON_OFF =
+  "disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
 export const linkButton =
-  "font-semibold text-green-link transition-colors duration-(--hover-ms) hover:text-navy disabled:opacity-50";
+  `font-semibold text-green-link transition-colors duration-(--hover-ms) hover:text-navy ${LINK_BUTTON_OFF}`;
 export const dangerLinkButton =
-  "font-semibold text-danger transition-opacity duration-(--hover-ms) hover:opacity-75 disabled:opacity-50";
+  `font-semibold text-danger transition-opacity duration-(--hover-ms) hover:opacity-75 ${LINK_BUTTON_OFF}`;
+// An action on a pastel row or panel (a failed row, the zone confirm, a new
+// notification), where the green falls under 4.5:1: navy, underlined on hover.
+export const tintedLinkButton =
+  `font-bold text-navy underline-offset-2 hover:underline ${LINK_BUTTON_OFF}`;
 
 // ---- Selectable rows / tabs / filters (see .selectable in theme.css) ----
 

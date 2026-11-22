@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
+import { IN_FLIGHT_STEP } from "./externalDispatchStatus";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -18,6 +19,9 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 // Stop the generation run before the platform's 60s function limit kills it
 // mid-loop (Spoke's 5 req/s write cap makes large dispatch batches slow).
 const GENERATION_TIME_BUDGET_MS = 50_000;
+// A waiting order marked as being sent more recently than this is another
+// release run's; an older mark is a send that was cut short.
+const IN_FLIGHT_WINDOW_MS = 2 * 60 * 1000;
 
 let initialized = false;
 
@@ -74,6 +78,8 @@ interface RecurrenceSchedule {
 
 export interface RecurringGenerationResult {
   dateKey: string;
+  // Waiting (later-dated) Anchor orders this run sent, before the profiles.
+  released: number;
   total: number;
   due: number;
   created: number;
@@ -127,7 +133,17 @@ export function isVancouverSixAmWindow(now = new Date()) {
   return parts.find((p) => p.type === "hour")?.value === "06";
 }
 
+// Staff press Generate to send a waiting Anchor order that missed 6 AM, so
+// those come first.
 export function formatGenerationMessage(result: RecurringGenerationResult) {
+  const released =
+    result.released > 0
+      ? `${result.released} waiting Anchor order${result.released === 1 ? "" : "s"} sent. `
+      : "";
+  return `${released}${formatProfileMessage(result)}`;
+}
+
+function formatProfileMessage(result: RecurringGenerationResult) {
   if (result.unprocessed > 0) {
     return `${result.created} order${result.created === 1 ? "" : "s"} generated before the time limit — ${result.unprocessed} profile(s) remaining. Click "Generate Today's Orders" again to continue.`;
   }
@@ -537,7 +553,7 @@ export async function generateRecurringOrders(
           await prisma.notification.create({
             data: {
               type: "SPOKE_DISPATCH_FAILED",
-              message: `Spoke dispatch failed for ${recurring.patientName} (${recurring.deliveryAddress}, ${recurring.deliveryCity}) — today's delivery was NOT sent to Spoke. Use "Generate Today's Orders" to retry.`,
+              message: `Today's recurring order for ${recurring.patientName} (${recurring.deliveryAddress}, ${recurring.deliveryCity}) was NOT sent to Anchor: sending it failed. Press "Generate Today's Orders" on Recurring to try again.`,
               storeId: recurring.storeId,
             },
           });
@@ -640,6 +656,7 @@ export async function generateRecurringOrders(
   console.log(`[CRON] Generated ${created} recurring orders for ${deliveryDate.dateKey}`);
   return {
     dateKey: deliveryDate.dateKey,
+    released: releasedDispatches,
     total: recurringOrders.length,
     due,
     created,
@@ -670,8 +687,30 @@ export async function releaseDueSpokeDispatches(
 
   let released = 0;
   for (const dispatch of dueDispatches) {
+    // Take the order in one statement just before sending. It must still be
+    // waiting (not cancelled or sent since the list above was read) and not
+    // marked by another run that is sending it now (the 6 AM run and a
+    // Generate press can overlap); otherwise both would send it, and the
+    // loser's failed call would raise a false "not sent" alert. Skipped
+    // quietly. A run killed mid-send leaves the order waiting with an old
+    // mark, so a later run sends it. workflowStep is nullable, and a NOT over
+    // NULL matches nothing, hence the OR.
+    const taken = await prisma.externalDispatch.updateMany({
+      where: {
+        id: dispatch.id,
+        status: "SCHEDULED",
+        OR: [
+          { workflowStep: null },
+          { workflowStep: { not: IN_FLIGHT_STEP } },
+          { updatedAt: { lte: new Date(Date.now() - IN_FLIGHT_WINDOW_MS) } },
+        ],
+      },
+      data: { workflowStep: IN_FLIGHT_STEP },
+    });
+    if (taken.count === 0) continue;
+
     try {
-      await dispatchOrderToSpoke({
+      const result = await dispatchOrderToSpoke({
         idempotencyKey: dispatch.idempotencyKey,
         patientId: dispatch.patientId,
         store: {
@@ -700,8 +739,12 @@ export async function releaseDueSpokeDispatches(
         scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
         createdById: dispatch.createdById,
       });
-      released++;
-      console.log(`[CRON] Released scheduled Spoke dispatch for ${dispatch.patientName}`);
+      if (result.alreadyDispatched) {
+        console.log(`[CRON] Scheduled Spoke dispatch for ${dispatch.patientName} was already sent or cancelled`);
+      } else {
+        released++;
+        console.log(`[CRON] Released scheduled Spoke dispatch for ${dispatch.patientName}`);
+      }
     } catch (err) {
       console.warn(
         `[CRON] Failed to release scheduled Spoke dispatch for ${dispatch.patientName}:`,
@@ -711,7 +754,7 @@ export async function releaseDueSpokeDispatches(
         await prisma.notification.create({
           data: {
             type: "SPOKE_DISPATCH_FAILED",
-            message: `Spoke dispatch failed for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) — the scheduled delivery was NOT sent to Spoke. Use "Generate Today's Orders" to retry.`,
+            message: `The waiting order for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) was NOT sent to Anchor: sending it failed. Open Orders and press Retry on it.`,
             storeId: dispatch.storeId,
           },
         });

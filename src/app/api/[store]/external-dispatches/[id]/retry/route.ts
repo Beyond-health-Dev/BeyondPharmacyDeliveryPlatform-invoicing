@@ -1,12 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { mayStillBeWithAnchorAfterCancel, stillWithAnchorAfterCancel } from "@/lib/externalDispatchStatus";
 import { SpokeDispatchError } from "@/lib/spoke";
 import { dispatchOrderToSpoke } from "@/lib/spokeDispatch";
 import { resolveStore } from "@/lib/store";
 
 // A retry can spend up to ~50s in Spoke's retry/backoff cycle.
 export const maxDuration = 60;
+
+// A cancelled order isn't sent again. If Anchor may still have it (the
+// cleanup failed, or Anchor has started on it anyway), say what to do.
+function cancelledMessage(dispatch: { status: string; workflowStep: string | null }) {
+  if (!mayStillBeWithAnchorAfterCancel(dispatch)) {
+    return "This order was cancelled, so it won't be sent to Anchor.";
+  }
+  const { why, fix } = stillWithAnchorAfterCancel(dispatch.workflowStep);
+  return `This order was cancelled, but ${why}. ${fix}.`;
+}
 
 // Safe resume for a failed Spoke handoff: replays dispatchOrderToSpoke with the
 // dispatch's ORIGINAL idempotency key, so anything that actually reached Spoke
@@ -41,12 +52,16 @@ export async function POST(
   });
 
   if (!dispatch || dispatch.storeId !== store.id || dispatch.provider !== "SPOKE") {
-    return NextResponse.json({ error: "External dispatch not found" }, { status: 404 });
+    return NextResponse.json({ error: "This Anchor order wasn't found. Refresh the page." }, { status: 404 });
+  }
+
+  if (dispatch.status === "CANCELLED") {
+    return NextResponse.json({ error: cancelledMessage(dispatch) }, { status: 409 });
   }
 
   if (dispatch.status !== "DISPATCH_FAILED") {
     return NextResponse.json(
-      { error: "Only failed Spoke handoffs can be retried." },
+      { error: "Only an order that didn't reach Anchor can be sent again. Refresh the page to see where it is." },
       { status: 409 }
     );
   }
@@ -82,15 +97,21 @@ export async function POST(
       createdById: dispatch.createdById,
     });
 
+    // Cancelled while the retry was on its way (the sender takes back any
+    // stop it had just created).
+    if (result.dispatch.status === "CANCELLED") {
+      return NextResponse.json({ error: cancelledMessage(result.dispatch) }, { status: 409 });
+    }
+
     return NextResponse.json({
-      message: "Spoke handoff retried.",
+      message: "Sent to Anchor.",
       dispatch: result.dispatch,
     });
   } catch (err) {
     const spokeError =
       err instanceof SpokeDispatchError
         ? err
-        : new SpokeDispatchError("Failed to retry Spoke handoff.", 502);
+        : new SpokeDispatchError("Couldn't send this order to Anchor. Try again in a minute.", 502);
 
     return NextResponse.json(
       { error: spokeError.message, external: true, provider: "SPOKE" },

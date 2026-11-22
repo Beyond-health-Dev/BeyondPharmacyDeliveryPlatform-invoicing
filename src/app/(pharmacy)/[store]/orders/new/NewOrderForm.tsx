@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PatientAutocomplete } from "@/components/PatientAutocomplete";
 import { AddressSelect, type AddressValue } from "@/components/AddressSelect";
@@ -18,7 +18,13 @@ import {
 } from "@/lib/portalStyles";
 import { BANNER_CLASSES } from "@/lib/statusTheme";
 import { EMPTY_ADDRESS, addressFromPatient } from "@/lib/addressForm";
-import { describeDeliveryDay, type DeliveryDateDefault } from "@/lib/vancouverDate";
+import { newOrderAnchorHint } from "@/lib/externalDispatchStatus";
+import {
+  addDaysToDateKey,
+  describeDeliveryDay,
+  vancouverTodayKey,
+  type DeliveryDateDefault,
+} from "@/lib/vancouverDate";
 import {
   resolveZoneSelection,
   suggestZone,
@@ -57,7 +63,29 @@ export default function NewOrderForm({
   dateDefault: DeliveryDateDefault;
 }) {
   const router = useRouter();
-  const { submit, loading, error, duplicate, clearDuplicate } = useCreateOrder(storeSlug);
+  // Vancouver's today, from the server's default (the noon rule moved that to
+  // tomorrow when nextDay is set) for the first render, so it matches the
+  // server's. A form left open past midnight then catches up: after mount
+  // and whenever the tab is shown again.
+  const [todayKey, setTodayKey] = useState(() =>
+    dateDefault.nextDay ? addDaysToDateKey(dateDefault.dateKey, -1) : dateDefault.dateKey
+  );
+  useEffect(() => {
+    const refresh = () => {
+      const current = vancouverTodayKey();
+      setTodayKey((known) => (known === current ? known : current));
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const afterMount = setTimeout(refresh, 0);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearTimeout(afterMount);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  const { submit, loading, error, duplicate, clearDuplicate } = useCreateOrder(storeSlug, { todayKey });
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patientNameFreeText, setPatientNameFreeText] = useState("");
@@ -86,6 +114,12 @@ export default function NewOrderForm({
   );
 
   const isExternalDriver = !!drivers.find((d) => d.id === selectedDriverId)?.isExternal;
+  // An Anchor order for a later day waits here for that day's 6 AM run.
+  const anchorHint = newOrderAnchorHint({
+    isAnchor: isExternalDriver,
+    scheduledDateKey: scheduledDate,
+    todayKey,
+  });
 
   // Anchor: the zone is assigned automatically (its price is never invoiced).
   // In-house (Derek): pre-filled from the address, but staff confirm it —
@@ -293,12 +327,19 @@ export default function NewOrderForm({
               setScheduledDate(e.target.value);
               clearDuplicate();
             }}
-            aria-describedby={showNextDayHint ? `${fieldId}-date-hint` : undefined}
+            aria-describedby={
+              cn(showNextDayHint && `${fieldId}-date-hint`, anchorHint && `${fieldId}-anchor-hint`) || undefined
+            }
             className={input}
           />
           {showNextDayHint && (
             <p id={`${fieldId}-date-hint`} className="mt-1 text-xs font-medium text-muted">
               After 12 PM, new orders default to the next day.
+            </p>
+          )}
+          {anchorHint && (
+            <p id={`${fieldId}-anchor-hint`} className="mt-1 text-xs font-medium text-muted">
+              {anchorHint}
             </p>
           )}
         </div>

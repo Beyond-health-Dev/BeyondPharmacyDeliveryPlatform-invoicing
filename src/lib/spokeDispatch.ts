@@ -1,13 +1,26 @@
 import { Prisma, type ExternalDispatch } from "@prisma/client";
 import { prisma } from "./db";
 import {
+  alreadySavedMessage,
+  CANCEL_ALERT_NOT_RAISED,
+  CANCEL_CLEANUP_FAILED_STEP,
+  CANCELLED_BUT_ACTIVE_STEP,
+  IN_FLIGHT_STEP,
+  isHeldForRelease,
+  isSendableExternalStatus,
+  SENDABLE_EXTERNAL_STATUSES,
+} from "./externalDispatchStatus";
+import {
   buildSpokeStopPayload,
   createSpokeUnassignedStop,
+  deleteSpokeUnassignedStop,
   getSpokeConfig,
   getSpokeProviderUserIds,
   SpokeDispatchError,
+  type SpokeConfig,
   type SpokeOrderInput,
 } from "./spoke";
+import { vancouverTodayKey } from "./vancouverDate";
 
 interface SpokeProviderUser {
   id: string;
@@ -59,45 +72,30 @@ function asPrismaJson(value: unknown) {
   return value as Prisma.InputJsonValue;
 }
 
-function buildExternalDispatchAuditData(input: {
-  status: string;
-  workflowStep?: string | null;
-  requestPayload: unknown;
-  responsePayload?: unknown;
-  errorMessage?: string | null;
-  externalReference?: string | null;
-  externalPlanId?: string | null;
-  spokePlanId?: string | null;
-  spokeStopId?: string | null;
-  spokeDriverId?: string | null;
-  spokeOperationId?: string | null;
-  selectedProviderUserId: string | null;
-  patientId: string | null;
-  patientName: string;
-  patientPhone: string | null;
-  deliveryAddress: string;
-  deliveryCity: string;
-  deliveryPostalCode: string;
-  deliveryAddressId: string | null;
-  deliveryZoneId: string;
-  deliveryZoneName: string;
-  priceAtCreation: number;
-  instructions: string | null;
-  scheduledDate: Date;
-  storeId: string;
-  createdById: string;
-}) {
+function spokeOrderInput(input: SpokeDispatchInput): SpokeOrderInput {
   return {
-    provider: "SPOKE",
-    status: input.status,
-    workflowStep: input.workflowStep ?? null,
-    externalReference: input.externalReference ?? null,
-    externalPlanId: input.externalPlanId ?? null,
-    spokePlanId: input.spokePlanId ?? null,
-    spokeStopId: input.spokeStopId ?? null,
-    spokeDriverId: input.spokeDriverId ?? null,
-    spokeOperationId: input.spokeOperationId ?? null,
-    selectedProviderUserId: input.selectedProviderUserId,
+    idempotencyKey: input.idempotencyKey,
+    patientId: input.patientId,
+    store: input.store,
+    providerUser: input.selectedProviderUser,
+    patientName: input.patientName,
+    patientPhone: input.patientPhone,
+    deliveryAddress: input.deliveryAddress,
+    deliveryCity: input.deliveryCity,
+    deliveryPostalCode: input.deliveryPostalCode,
+    deliveryZoneName: input.deliveryZoneName,
+    instructions: input.instructions,
+    scheduledDate: input.scheduledDate,
+    scheduledDateKey: input.scheduledDateKey,
+  };
+}
+
+// The order's details as they are sent to Spoke. Deliberately none of the
+// lifecycle columns (status, step, stop id, responses): writing back a copy
+// of those read earlier would undo a cancel or a webhook that landed since.
+function dispatchSnapshotData(input: SpokeDispatchInput, stopPayload: unknown) {
+  return {
+    selectedProviderUserId: input.selectedProviderUser?.id ?? null,
     patientId: input.patientId,
     patientName: input.patientName,
     patientPhone: input.patientPhone,
@@ -110,12 +108,99 @@ function buildExternalDispatchAuditData(input: {
     priceAtCreation: input.priceAtCreation,
     instructions: input.instructions,
     scheduledDate: input.scheduledDate,
-    requestPayload: asPrismaJson(input.requestPayload),
-    responsePayload: asPrismaJson(input.responsePayload),
-    errorMessage: input.errorMessage ?? null,
-    storeId: input.storeId,
-    createdById: input.createdById,
+    requestPayload: asPrismaJson(stopPayload),
   };
+}
+
+function newDispatchData(
+  input: SpokeDispatchInput,
+  stopPayload: unknown,
+  lifecycle: { status: string; workflowStep: string }
+) {
+  return {
+    idempotencyKey: input.idempotencyKey,
+    provider: "SPOKE",
+    status: lifecycle.status,
+    workflowStep: lifecycle.workflowStep,
+    storeId: input.store.id,
+    createdById: input.createdById,
+    errorMessage: null,
+    ...dispatchSnapshotData(input, stopPayload),
+  };
+}
+
+function idempotencyConflict() {
+  return new SpokeDispatchError("Idempotency key conflict", 409, null, "IDEMPOTENCY");
+}
+
+function dateKeyOf(dispatch: Pick<ExternalDispatch, "scheduledDate">) {
+  return dispatch.scheduledDate.toISOString().slice(0, 10);
+}
+
+// The form keeps its request key after a server or network error, so a save
+// that failed and is then made for another day arrives with the same key.
+// The row stays exactly as it is; the order route answers 409 with this, and
+// the form starts a new request for the next save.
+export function alreadySavedConflict(dispatch: ExternalDispatch) {
+  return new SpokeDispatchError(
+    alreadySavedMessage(
+      { status: dispatch.status, scheduledDateKey: dateKeyOf(dispatch), workflowStep: dispatch.workflowStep },
+      vancouverTodayKey()
+    ),
+    409,
+    null,
+    "IDEMPOTENCY"
+  );
+}
+
+// A row already saved under this request key, before anything is sent or
+// written: it must be this store's and for the same delivery day.
+function checkExistingRow(dispatch: ExternalDispatch, input: SpokeDispatchInput) {
+  if (dispatch.storeId !== input.store.id) throw idempotencyConflict();
+  if (dateKeyOf(dispatch) !== input.scheduledDateKey) throw alreadySavedConflict(dispatch);
+}
+
+function cancelIncompleteMessage(dispatch: ExternalDispatch) {
+  return `The order for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) was cancelled here while it was being sent, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it.`;
+}
+
+async function alertCancelIncomplete(dispatch: ExternalDispatch) {
+  try {
+    await prisma.notification.create({
+      data: {
+        type: "SPOKE_CANCEL_INCOMPLETE",
+        message: cancelIncompleteMessage(dispatch),
+        storeId: dispatch.storeId,
+      },
+    });
+  } catch (err) {
+    console.error("[SPOKE] Failed to record cancel-incomplete notification:", err);
+  }
+}
+
+// Spoke may have made the stop even though the create call failed: no answer
+// (timeout or network), a server error, or a conflict. A refusal (400, 401,
+// 403, 404, 422, 429) means it didn't.
+function stopMayExistAfterFailure(err: SpokeDispatchError) {
+  const status = err.upstreamStatus;
+  return status === null || status >= 500 || status === 409;
+}
+
+// The row as it now stands, or as it was last read if it can't be read.
+async function reread(dispatch: ExternalDispatch) {
+  try {
+    return (await prisma.externalDispatch.findUnique({ where: { id: dispatch.id } })) ?? dispatch;
+  } catch {
+    return dispatch;
+  }
+}
+
+// Two saves with the same key at once: the other one created the row first.
+async function findKeyRaceWinner(err: unknown, idempotencyKey: string) {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") {
+    return null;
+  }
+  return prisma.externalDispatch.findUnique({ where: { idempotencyKey } });
 }
 
 export function buildExternalDispatchResponse(
@@ -139,20 +224,6 @@ export function isSelectedSpokeProvider(userId: string | null | undefined) {
   return userId ? getSpokeProviderUserIds().has(userId) : false;
 }
 
-function isTerminalExternalDispatch(dispatch: ExternalDispatch) {
-  return [
-    "DISTRIBUTED",
-    "ALLOCATED",
-    "IN_TRANSIT",
-    "DEPARTED",
-    "TRACKING_LINK_ADDED",
-    "SUBMITTED",
-    "DELIVERED",
-    "DELIVERY_FAILED",
-    "CANCELLED",
-  ].includes(dispatch.status);
-}
-
 function toSpokeDispatchError(err: unknown) {
   if (err instanceof SpokeDispatchError) return err;
 
@@ -171,102 +242,149 @@ function toSpokeDispatchError(err: unknown) {
   return new SpokeDispatchError("Failed to contact Spoke.", 502);
 }
 
+// The order was cancelled here while its stop was being created at Spoke. The
+// cancel saw no stop to remove, so the sender removes it. Never throws: the
+// cancel is already recorded, and if the stop can't be removed staff are told
+// to remove it in Spoke themselves.
+async function withdrawStopAfterCancel(
+  config: SpokeConfig,
+  dispatch: ExternalDispatch,
+  stopId: string
+): Promise<ExternalDispatch> {
+  let removed = false;
+  try {
+    // Same idempotency key the cancel route uses.
+    await deleteSpokeUnassignedStop(config, {
+      unassignedStopId: stopId,
+      idempotencyKey: dispatch.idempotencyKey,
+    });
+    removed = true;
+  } catch (err) {
+    // Already gone at Spoke is the outcome we wanted.
+    removed = err instanceof SpokeDispatchError && err.upstreamStatus === 404;
+    if (!removed) {
+      console.warn(`[SPOKE] Could not remove the stop of cancelled order ${dispatch.id}:`, err);
+    }
+  }
+
+  // Staff are told when the stop is left at Anchor, once per order; if the
+  // row can't be marked, they are told anyway.
+  let alert = !removed;
+  try {
+    await prisma.externalDispatch.updateMany({
+      where: { id: dispatch.id, status: "CANCELLED" },
+      data: { spokeStopId: stopId, externalReference: stopId },
+    });
+    if (removed) {
+      // Anchor's own update may have marked the row already (it went on to
+      // handle the order); that marker stays.
+      await prisma.externalDispatch.updateMany({
+        where: {
+          id: dispatch.id,
+          status: "CANCELLED",
+          OR: [{ workflowStep: null }, { workflowStep: { not: CANCELLED_BUT_ACTIVE_STEP } }],
+        },
+        data: { workflowStep: "CANCEL_UNASSIGNED_STOP" },
+      });
+    } else {
+      const flagged = await prisma.externalDispatch.updateMany({
+        where: { id: dispatch.id, status: "CANCELLED", ...CANCEL_ALERT_NOT_RAISED },
+        data: { workflowStep: CANCEL_CLEANUP_FAILED_STEP },
+      });
+      alert = flagged.count > 0;
+    }
+  } catch (err) {
+    console.error(`[SPOKE] Failed to record the stop of cancelled order ${dispatch.id}:`, err);
+  }
+
+  if (alert) await alertCancelIncomplete(dispatch);
+
+  return reread(dispatch);
+}
+
+// Sends an order to Spoke, or resumes a send (release of a SCHEDULED row,
+// Retry of a DISPATCH_FAILED one) under the same idempotency key. Cancel
+// always wins: every write is guarded by the sendable statuses, so a cancel or
+// Anchor's own update that lands mid-send is never overwritten.
 export async function dispatchOrderToSpoke(
   input: SpokeDispatchInput
 ): Promise<SpokeDispatchResult> {
-  let dispatch: ExternalDispatch | null = null;
+  // Set once the row is known to be this store's; the catch block marks it.
+  let dispatchId: string | null = null;
+  // True while the create-stop call is out, so the catch knows a stop may
+  // exist at Spoke.
+  let creatingStop = false;
 
   try {
-    dispatch = await prisma.externalDispatch.findUnique({
+    let dispatch = await prisma.externalDispatch.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
     });
 
     if (dispatch) {
-      if (dispatch.storeId !== input.store.id) {
-        throw new SpokeDispatchError(
-          "Idempotency key conflict",
-          409,
-          null,
-          "IDEMPOTENCY"
-        );
-      }
-      if (isTerminalExternalDispatch(dispatch)) {
+      checkExistingRow(dispatch, input);
+      // Already sent, cancelled, or Anchor has it.
+      if (!isSendableExternalStatus(dispatch.status)) {
         return { dispatch, alreadyDispatched: true };
       }
+      dispatchId = dispatch.id;
     }
 
     const spokeConfig = getSpokeConfig();
-    const spokeInput: SpokeOrderInput = {
-      idempotencyKey: input.idempotencyKey,
-      patientId: input.patientId,
-      store: input.store,
-      providerUser: input.selectedProviderUser,
-      patientName: input.patientName,
-      patientPhone: input.patientPhone,
-      deliveryAddress: input.deliveryAddress,
-      deliveryCity: input.deliveryCity,
-      deliveryPostalCode: input.deliveryPostalCode,
-      deliveryZoneName: input.deliveryZoneName,
-      instructions: input.instructions,
-      scheduledDate: input.scheduledDate,
-      scheduledDateKey: input.scheduledDateKey,
-    };
-    const stopPayload = buildSpokeStopPayload(spokeInput, spokeConfig.circuitClientId);
+    const stopPayload = buildSpokeStopPayload(
+      spokeOrderInput(input),
+      spokeConfig.circuitClientId
+    );
 
-    const baseAudit = {
-      requestPayload: stopPayload,
-      selectedProviderUserId: input.selectedProviderUser?.id ?? null,
-      patientId: input.patientId,
-      patientName: input.patientName,
-      patientPhone: input.patientPhone,
-      deliveryAddress: input.deliveryAddress,
-      deliveryCity: input.deliveryCity,
-      deliveryPostalCode: input.deliveryPostalCode,
-      deliveryAddressId: input.deliveryAddressId,
-      deliveryZoneId: input.deliveryZoneId,
-      deliveryZoneName: input.deliveryZoneName,
-      priceAtCreation: input.priceAtCreation,
-      instructions: input.instructions,
-      scheduledDate: input.scheduledDate,
-      storeId: input.store.id,
-      createdById: input.createdById,
-      externalPlanId: null,
-      spokePlanId: null,
-      spokeDriverId: null,
-    };
+    if (!dispatch) {
+      try {
+        dispatch = await prisma.externalDispatch.create({
+          data: newDispatchData(input, stopPayload, {
+            status: "PENDING",
+            workflowStep: "PENDING",
+          }),
+        });
+      } catch (err) {
+        const winner = await findKeyRaceWinner(err, input.idempotencyKey);
+        if (!winner) throw err;
+        checkExistingRow(winner, input);
+        dispatch = winner;
+      }
+    }
 
-    dispatch = await prisma.externalDispatch.upsert({
-      where: { idempotencyKey: input.idempotencyKey },
-      update: buildExternalDispatchAuditData({
-        ...baseAudit,
-        status: dispatch?.status ?? "PENDING",
-        workflowStep: dispatch?.workflowStep ?? "PENDING",
-        spokeStopId: dispatch?.spokeStopId,
-        externalReference: dispatch?.externalReference,
-        spokeOperationId: dispatch?.spokeOperationId,
-        responsePayload: dispatch?.responsePayload,
+    const id = dispatch.id;
+    dispatchId = id;
+
+    // One statement just before calling Spoke: a cancel that landed since the
+    // read above stops the send here. The status is left as it is (a SCHEDULED
+    // row stays SCHEDULED), so a send cut short is picked up again by the next
+    // release run.
+    const claimed = await prisma.externalDispatch.updateMany({
+      where: { id, status: { in: SENDABLE_EXTERNAL_STATUSES } },
+      data: {
+        ...dispatchSnapshotData(input, stopPayload),
+        workflowStep: IN_FLIGHT_STEP,
         errorMessage: null,
-      }),
-      create: {
-        idempotencyKey: input.idempotencyKey,
-        ...buildExternalDispatchAuditData({
-          ...baseAudit,
-          status: "PENDING",
-          workflowStep: "PENDING",
-          errorMessage: null,
-        }),
       },
     });
+    dispatch = await prisma.externalDispatch.findUniqueOrThrow({
+      where: { id },
+    });
+    if (claimed.count === 0 || !isSendableExternalStatus(dispatch.status)) {
+      return { dispatch, alreadyDispatched: true };
+    }
 
     let spokeStopId = dispatch.spokeStopId;
     if (!spokeStopId) {
+      creatingStop = true;
       const stopResult = await createSpokeUnassignedStop(spokeConfig, {
         stopPayload,
         idempotencyKey: input.idempotencyKey,
       });
+      creatingStop = false;
       spokeStopId = stopResult.stopId;
-      dispatch = await prisma.externalDispatch.update({
-        where: { id: dispatch.id },
+
+      const recorded = await prisma.externalDispatch.updateMany({
+        where: { id, status: { in: SENDABLE_EXTERNAL_STATUSES } },
         data: {
           status: "STOP_CREATED",
           workflowStep: "CREATE_UNASSIGNED_STOP",
@@ -277,6 +395,21 @@ export async function dispatchOrderToSpoke(
           errorMessage: null,
         },
       });
+
+      if (recorded.count === 0) {
+        const latest = await prisma.externalDispatch.findUniqueOrThrow({
+          where: { id },
+        });
+        // Cancelled while Spoke was creating the stop: take it back out.
+        if (latest.status === "CANCELLED") {
+          return {
+            dispatch: await withdrawStopAfterCancel(spokeConfig, latest, spokeStopId),
+            alreadyDispatched: true,
+          };
+        }
+        // Otherwise Anchor's update (e.g. stop.allocated) arrived first; its
+        // status and stop id are kept by the guarded writes below.
+      }
     }
 
     const finalDispatch = await prisma.$transaction(async (tx) => {
@@ -287,13 +420,13 @@ export async function dispatchOrderToSpoke(
             deliveryAddressId: input.deliveryAddressId,
           };
 
-      // Only advance PENDING/STOP_CREATED to SUBMITTED. A fast webhook (e.g.
-      // stop.allocated seconds after creation) or a staff cancellation can land
-      // between the stop creation and this write; blindly overwriting would
-      // regress the webhook's status or silently un-cancel the handoff. When
-      // that happens, persist the metadata only and keep the newer status.
+      // Only a still-sendable row advances to SUBMITTED. A fast webhook (e.g.
+      // stop.allocated seconds after creation) or a staff cancel can land
+      // during the send; then only the patient links are saved, and the stop
+      // id only if none is recorded yet, so a webhook's stop id is never
+      // replaced and the newer status is kept.
       const advanced = await tx.externalDispatch.updateMany({
-        where: { id: dispatch!.id, status: { in: ["PENDING", "STOP_CREATED"] } },
+        where: { id, status: { in: SENDABLE_EXTERNAL_STATUSES } },
         data: {
           status: "SUBMITTED",
           workflowStep: "CREATE_UNASSIGNED_STOP",
@@ -309,31 +442,42 @@ export async function dispatchOrderToSpoke(
 
       if (advanced.count === 0) {
         await tx.externalDispatch.updateMany({
-          where: { id: dispatch!.id },
+          where: { id },
           data: {
-            externalReference: spokeStopId,
-            spokeStopId,
             patientId: finalSnapshot.patientId,
             deliveryAddressId: finalSnapshot.deliveryAddressId,
           },
         });
+        await tx.externalDispatch.updateMany({
+          where: { id, spokeStopId: null },
+          data: { spokeStopId, externalReference: spokeStopId },
+        });
+        // Don't leave the row looking mid-send under Anchor's status.
+        await tx.externalDispatch.updateMany({
+          where: { id, workflowStep: IN_FLIGHT_STEP },
+          data: { workflowStep: "CREATE_UNASSIGNED_STOP" },
+        });
       }
 
       return tx.externalDispatch.findUniqueOrThrow({
-        where: { id: dispatch!.id },
+        where: { id },
       });
     });
 
-    return { dispatch: finalDispatch, alreadyDispatched: false };
+    // Cancelled after the stop was recorded: the cancel route removes the
+    // stop itself. Not counted as sent.
+    return { dispatch: finalDispatch, alreadyDispatched: finalDispatch.status === "CANCELLED" };
   } catch (err) {
     const spokeError = toSpokeDispatchError(err);
 
-    if (dispatch) {
+    if (dispatchId) {
+      let marked: boolean;
       try {
-        // Only early states may be marked failed — a webhook or cancellation
-        // that advanced the row in the meantime must not be regressed.
-        await prisma.externalDispatch.updateMany({
-          where: { id: dispatch.id, status: { in: ["PENDING", "STOP_CREATED", "SCHEDULED"] } },
+        // Only a row that could still be sent is marked failed (a failed
+        // retry is re-marked with the new message). A cancel or webhook that
+        // moved the row on in the meantime is kept.
+        const failed = await prisma.externalDispatch.updateMany({
+          where: { id: dispatchId, status: { in: SENDABLE_EXTERNAL_STATUSES } },
           data: {
             status: "DISPATCH_FAILED",
             workflowStep: spokeError.workflowStep,
@@ -341,8 +485,31 @@ export async function dispatchOrderToSpoke(
             errorMessage: spokeError.message,
           },
         });
+        marked = failed.count > 0;
       } catch (auditError) {
         console.warn("[SPOKE] Failed to update dispatch failure audit:", auditError);
+        throw spokeError;
+      }
+
+      // The row moved on while this send failed: cancelled here, or sent by
+      // another run (or Anchor has it). That outcome stands; this failure
+      // isn't the order's.
+      const latest = marked
+        ? null
+        : await prisma.externalDispatch.findUnique({ where: { id: dispatchId } }).catch(() => null);
+      if (latest && !isSendableExternalStatus(latest.status)) {
+        console.warn(
+          `[SPOKE] Send of order ${latest.id} failed after it became ${latest.status}; keeping ${latest.status}:`,
+          spokeError.message
+        );
+        if (
+          latest.status === "CANCELLED" &&
+          creatingStop &&
+          stopMayExistAfterFailure(spokeError)
+        ) {
+          return { dispatch: await flagCancelledStopMayExist(latest), alreadyDispatched: true };
+        }
+        return { dispatch: latest, alreadyDispatched: true };
       }
     }
 
@@ -350,12 +517,41 @@ export async function dispatchOrderToSpoke(
   }
 }
 
+// Cancelled during a create-stop call that failed in a way that may still
+// have made the stop at Spoke. Nobody knows its id, so staff remove it in
+// Spoke themselves (once per order; if the row can't be flagged, they are
+// told anyway). Never throws; returns the row as flagged.
+async function flagCancelledStopMayExist(dispatch: ExternalDispatch): Promise<ExternalDispatch> {
+  let alert = true;
+  try {
+    const flagged = await prisma.externalDispatch.updateMany({
+      where: { id: dispatch.id, status: "CANCELLED", ...CANCEL_ALERT_NOT_RAISED },
+      data: { workflowStep: CANCEL_CLEANUP_FAILED_STEP },
+    });
+    alert = flagged.count > 0;
+  } catch (err) {
+    console.error(`[SPOKE] Failed to flag cancelled order ${dispatch.id}:`, err);
+  }
+  if (alert) await alertCancelIncomplete(dispatch);
+  return reread(dispatch);
+}
+
+// A replayed hold (same request key): the row is returned exactly as it is
+// only while it is still held for that same day. Rewriting it could undo a
+// cancel, or put an order already sent back on hold, so anything else is
+// refused and staff sort out the earlier save first.
+function replayedHold(existing: ExternalDispatch, input: SpokeDispatchInput) {
+  checkExistingRow(existing, input);
+  if (!isHeldForRelease(existing.status)) throw alreadySavedConflict(existing);
+  return existing;
+}
+
 // Records a Spoke handoff WITHOUT contacting Spoke, for orders whose delivery
 // day hasn't arrived yet. Unassigned stops carry no machine-readable date, so a
 // stop created days early sits in Anchor's queue and never lands on the right
 // day's plan (Shirley Heap, Jul 6 2026). The daily cron releases these through
 // dispatchOrderToSpoke (same idempotency key) on the morning of delivery —
-// "SCHEDULED" is deliberately not a terminal status, so the release proceeds.
+// "SCHEDULED" is deliberately a sendable status, so the release proceeds.
 export async function scheduleDeferredSpokeDispatch(
   input: SpokeDispatchInput
 ): Promise<SpokeDispatchResult> {
@@ -365,82 +561,44 @@ export async function scheduleDeferredSpokeDispatch(
     });
 
     if (existing) {
-      if (existing.storeId !== input.store.id) {
-        throw new SpokeDispatchError(
-          "Idempotency key conflict",
-          409,
-          null,
-          "IDEMPOTENCY"
-        );
-      }
-      if (isTerminalExternalDispatch(existing) || existing.status === "SCHEDULED") {
-        return { dispatch: existing, alreadyDispatched: true };
-      }
+      return { dispatch: replayedHold(existing, input), alreadyDispatched: true };
     }
 
     // Build the same payload the release step will send, for the audit trail
     // (also surfaces a missing SPOKE_API_KEY now rather than at 6 AM).
     const spokeConfig = getSpokeConfig();
     const stopPayload = buildSpokeStopPayload(
-      {
-        idempotencyKey: input.idempotencyKey,
-        patientId: input.patientId,
-        store: input.store,
-        providerUser: input.selectedProviderUser,
-        patientName: input.patientName,
-        patientPhone: input.patientPhone,
-        deliveryAddress: input.deliveryAddress,
-        deliveryCity: input.deliveryCity,
-        deliveryPostalCode: input.deliveryPostalCode,
-        deliveryZoneName: input.deliveryZoneName,
-        instructions: input.instructions,
-        scheduledDate: input.scheduledDate,
-        scheduledDateKey: input.scheduledDateKey,
-      },
+      spokeOrderInput(input),
       spokeConfig.circuitClientId
     );
 
-    const dispatch = await prisma.$transaction(async (tx) => {
-      const snapshot = input.onBeforeComplete
-        ? await input.onBeforeComplete(tx)
-        : {
-            patientId: input.patientId,
-            deliveryAddressId: input.deliveryAddressId,
-          };
+    try {
+      const dispatch = await prisma.$transaction(async (tx) => {
+        const snapshot = input.onBeforeComplete
+          ? await input.onBeforeComplete(tx)
+          : {
+              patientId: input.patientId,
+              deliveryAddressId: input.deliveryAddressId,
+            };
 
-      const auditData = buildExternalDispatchAuditData({
-        status: "SCHEDULED",
-        workflowStep: "AWAITING_RELEASE",
-        requestPayload: stopPayload,
-        selectedProviderUserId: input.selectedProviderUser?.id ?? null,
-        patientId: snapshot.patientId,
-        patientName: input.patientName,
-        patientPhone: input.patientPhone,
-        deliveryAddress: input.deliveryAddress,
-        deliveryCity: input.deliveryCity,
-        deliveryPostalCode: input.deliveryPostalCode,
-        deliveryAddressId: snapshot.deliveryAddressId,
-        deliveryZoneId: input.deliveryZoneId,
-        deliveryZoneName: input.deliveryZoneName,
-        priceAtCreation: input.priceAtCreation,
-        instructions: input.instructions,
-        scheduledDate: input.scheduledDate,
-        storeId: input.store.id,
-        createdById: input.createdById,
-        externalPlanId: null,
-        spokePlanId: null,
-        spokeDriverId: null,
-        errorMessage: null,
+        return tx.externalDispatch.create({
+          data: {
+            ...newDispatchData(input, stopPayload, {
+              status: "SCHEDULED",
+              workflowStep: "AWAITING_RELEASE",
+            }),
+            patientId: snapshot.patientId,
+            deliveryAddressId: snapshot.deliveryAddressId,
+          },
+        });
       });
 
-      return tx.externalDispatch.upsert({
-        where: { idempotencyKey: input.idempotencyKey },
-        update: auditData,
-        create: { idempotencyKey: input.idempotencyKey, ...auditData },
-      });
-    });
-
-    return { dispatch, alreadyDispatched: false };
+      return { dispatch, alreadyDispatched: false };
+    } catch (err) {
+      const winner = await findKeyRaceWinner(err, input.idempotencyKey);
+      if (!winner) throw err;
+      return { dispatch: replayedHold(winner, input), alreadyDispatched: true };
+    }
   } catch (err) {
     throw toSpokeDispatchError(err);
   }
