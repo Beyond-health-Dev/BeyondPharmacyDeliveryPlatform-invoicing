@@ -3,11 +3,7 @@ import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { getVancouverDeliveryDateInfo } from "@/lib/cron";
-import {
-  canCancelExternalDispatch,
-  externalStatusLabel,
-  externalStatusNote,
-} from "@/lib/externalDispatchStatus";
+import { externalDispatchRowView } from "@/lib/externalDispatchStatus";
 import { externalStatusWhere, orderStatusWhere } from "@/lib/orderFilters";
 import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { vancouverHour } from "@/lib/vancouverDate";
@@ -34,7 +30,7 @@ export default async function OrdersPage({
   const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   // Vancouver's today, for the "Not confirmed" filter and the row notes.
   const { dateKey: todayKey, dayStart: todayStart } = getVancouverDeliveryDateInfo(now);
-  const hour = vancouverHour(now);
+  const clock = { todayKey, vancouverHour: vancouverHour(now) };
   const where: Prisma.OrderWhereInput = {
     storeId: store.id,
     ...orderStatusWhere(status),
@@ -93,6 +89,7 @@ export default async function OrdersPage({
       canCancelExternal: false,
       statusLabel: null,
       statusNote: null,
+      needsAttention: false,
     })),
     ...externalDispatches.map((dispatch) => ({
       id: `external-${dispatch.id}`,
@@ -110,14 +107,7 @@ export default async function OrdersPage({
       isExternal: true,
       externalProvider: "Spoke",
       externalDispatchId: dispatch.id,
-      canCancelExternal: canCancelExternalDispatch(dispatch),
-      statusLabel: externalStatusLabel(dispatch.status),
-      statusNote: externalStatusNote({
-        status: dispatch.status,
-        scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
-        todayKey,
-        vancouverHour: hour,
-      }),
+      ...externalDispatchRowView(dispatch, clock),
     })),
   ]
     .sort((a, b) => {

@@ -122,11 +122,20 @@ export default function OrdersList({
                         </td>
                         <td className="px-6 py-4">
                           {/* No wrapping: the table scrolls sideways on a phone instead. */}
-                          <span className={cn(statusColors[order.status] || statusBadgeClasses(order.status), "whitespace-nowrap")}>
+                          {/* A held order that missed its send looks like a failed one. */}
+                          <span
+                            className={cn(
+                              order.needsAttention
+                                ? statusBadgeClasses("FAILED")
+                                : statusColors[order.status] || statusBadgeClasses(order.status),
+                              "whitespace-nowrap"
+                            )}
+                          >
                             {order.statusLabel ?? order.status.replace(/_/g, " ")}
                           </span>
+                          {/* Notes can run to two sentences: they wrap, the badge doesn't. */}
                           {order.statusNote && (
-                            <p className="mt-1 whitespace-nowrap text-xs font-medium text-muted">{order.statusNote}</p>
+                            <p className="mt-1 min-w-48 max-w-64 text-xs font-medium text-muted">{order.statusNote}</p>
                           )}
                         </td>
                         <td className="px-6 py-4">
@@ -136,6 +145,7 @@ export default function OrdersList({
                               currentStatus={order.status}
                               canCancel={order.canCancelExternal}
                               storeSlug={storeSlug}
+                              patientName={order.patientName}
                             />
                           ) : (
                             <OrderActions

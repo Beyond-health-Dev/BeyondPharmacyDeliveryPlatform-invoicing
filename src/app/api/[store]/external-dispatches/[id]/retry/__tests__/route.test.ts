@@ -72,8 +72,54 @@ describe("POST /api/[store]/external-dispatches/[id]/retry", () => {
     const { status, body } = await retry(cancelled.id);
 
     expect(status).toBe(409);
-    expect(body.error).toContain("cancelled");
+    expect(body.error).toBe("This order was cancelled, so it won't be sent to Anchor.");
     expect(mocks.createStop).not.toHaveBeenCalled();
+  });
+
+  it.each(["CANCEL_CLEANUP_FAILED", "CANCELLED_BUT_ACTIVE"])(
+    "says a cancelled order may still be in Anchor's list (%s)",
+    async (workflowStep) => {
+      const cancelled = table.addRow({ status: "CANCELLED", workflowStep });
+
+      const { status, body } = await retry(cancelled.id);
+
+      expect(status).toBe(409);
+      expect(body.error).toBe(
+        "This order was cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it."
+      );
+      expect(mocks.createStop).not.toHaveBeenCalled();
+    }
+  );
+
+  it("says plainly that only an order that didn't reach Anchor can be sent again", async () => {
+    const sent = table.addRow({ status: "SUBMITTED", spokeStopId: STOP });
+
+    const { status, body } = await retry(sent.id);
+
+    expect(status).toBe(409);
+    expect(body.error).toContain("didn't reach Anchor");
+    expect(body.error).not.toMatch(/Spoke|handoff/);
+  });
+
+  it("says the order wasn't found in plain words", async () => {
+    const { status, body } = await retry("missing");
+
+    expect(status).toBe(404);
+    expect(body.error).toBe("This Anchor order wasn't found. Refresh the page.");
+  });
+
+  it("says the cleanup may have failed when a cancel lands mid-retry and the stop can't be removed", async () => {
+    const failed = table.addRow({ status: "DISPATCH_FAILED" });
+    mocks.createStop.mockImplementation(async () => {
+      Object.assign(table.row(failed.id), { status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
+      return { stopId: STOP, pending: false, requestPayload: {}, responsePayload: { id: STOP } };
+    });
+    mocks.deleteStop.mockRejectedValue(new Error("Spoke is down"));
+
+    const { status, body } = await retry(failed.id);
+
+    expect(status).toBe(409);
+    expect(body.error).toContain("may still be in Anchor's list");
   });
 
   it("says so when the order is cancelled while the retry is out", async () => {

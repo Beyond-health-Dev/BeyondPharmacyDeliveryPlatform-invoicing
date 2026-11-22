@@ -39,6 +39,28 @@ export const FAILED_EXTERNAL_STATUSES: string[] = ["DELIVERY_FAILED", "DISPATCH_
 // was, so a send cut short is picked up again by the next release run.
 export const IN_FLIGHT_STEP = "SENDING";
 
+// workflowStep on a CANCELLED row whose stop may still be in Anchor's list:
+// the sender couldn't remove the stop it made, or a send that failed may have
+// left one behind. Staff were alerted to remove it in Spoke.
+export const CANCEL_CLEANUP_FAILED_STEP = "CANCEL_CLEANUP_FAILED";
+
+// workflowStep on a CANCELLED row that Anchor went on to allocate, route or
+// deliver anyway (its webhook says so). Staff were alerted to contact Anchor.
+// Nothing else overwrites it, so the alert goes out once per order.
+export const CANCELLED_BUT_ACTIVE_STEP = "CANCELLED_BUT_ACTIVE";
+
+// A cancelled order that may still reach the patient through Anchor.
+export function mayStillBeWithAnchorAfterCancel(dispatch: {
+  status: string;
+  workflowStep: string | null;
+}) {
+  return (
+    dispatch.status === "CANCELLED" &&
+    (dispatch.workflowStep === CANCEL_CLEANUP_FAILED_STEP ||
+      dispatch.workflowStep === CANCELLED_BUT_ACTIVE_STEP)
+  );
+}
+
 const SENDABLE = new Set(SENDABLE_EXTERNAL_STATUSES);
 const CANCELLABLE = new Set(CANCELLABLE_EXTERNAL_STATUSES);
 const UNCONFIRMED = new Set(UNCONFIRMED_EXTERNAL_STATUSES);
@@ -79,37 +101,102 @@ export function isHeldUntilDeliveryDay(scheduledDateKey: string, todayKey: strin
   return scheduledDateKey > todayKey;
 }
 
-// The status badge text. Every other status reads as it always has.
+// The status badge text, in capitals like every other badge.
 export function externalStatusLabel(status: string) {
-  if (isHeldForRelease(status)) return "Waiting to send";
+  if (isHeldForRelease(status)) return "WAITING TO SEND";
   return status.replace(/_/g, " ");
 }
 
-// A short line under the badge, or null. The clock parts come from the server
-// (the screens must not read the browser's clock).
-export function externalStatusNote({
-  status,
-  scheduledDateKey,
-  todayKey,
-  vancouverHour,
-}: {
+interface StatusClock {
   status: string;
   scheduledDateKey: string;
   todayKey: string;
   vancouverHour: number;
-}): string | null {
-  if (isHeldForRelease(status)) {
-    const stillDue =
-      scheduledDateKey > todayKey ||
-      (scheduledDateKey === todayKey && vancouverHour <= RELEASE_HOUR);
-    return stillDue
-      ? `Goes to Anchor about 6 AM ${describeDeliveryDayFrom(scheduledDateKey, todayKey)}`
-      : "Not sent to Anchor yet";
+}
+
+// A held order the 6 AM run should already have sent: dated today from 7 AM
+// on, or dated a day that has passed. Anchor doesn't have it.
+function missedRelease({ status, scheduledDateKey, todayKey, vancouverHour }: StatusClock) {
+  if (!isHeldForRelease(status)) return null;
+  if (scheduledDateKey < todayKey) return "overdue";
+  if (scheduledDateKey === todayKey && vancouverHour > RELEASE_HOUR) return "today";
+  return null;
+}
+
+// "Sun, Nov 22" (with the year when it isn't this one) for a YYYY-MM-DD key.
+function shortDayLabel(dateKey: string, todayKey: string) {
+  return new Date(`${dateKey}T00:00:00.000Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(dateKey.slice(0, 4) !== todayKey.slice(0, 4) && { year: "numeric" }),
+  });
+}
+
+// A short line under the badge, or null. The clock parts come from the server
+// (the screens must not read the browser's clock).
+export function externalStatusNote(clock: StatusClock): string | null {
+  const { status, scheduledDateKey, todayKey } = clock;
+  const missed = missedRelease(clock);
+  if (missed === "today") {
+    return "Missed the 6 AM send. Anchor doesn't have it yet. Press Generate Today's Orders on Recurring to send it.";
   }
+  if (missed === "overdue") {
+    return `Was due ${shortDayLabel(scheduledDateKey, todayKey)}. Anchor doesn't have it. Send it with Generate Today's Orders on Recurring, or cancel it.`;
+  }
+  if (isHeldForRelease(status)) {
+    return `Goes to Anchor about 6 AM ${describeDeliveryDayFrom(scheduledDateKey, todayKey)}`;
+  }
+  if (status === "DISPATCH_FAILED") return "Didn't reach Anchor. Press Retry to send it again.";
+  if (status === "DELIVERY_FAILED") return "Anchor couldn't deliver it.";
   if (UNCONFIRMED.has(status) && scheduledDateKey < todayKey) {
     return "No confirmation from Anchor";
   }
   return null;
+}
+
+// A held order that missed its send: shown like a failed one, so it doesn't
+// look as if it is still on its way.
+export function externalNeedsAttention(clock: StatusClock) {
+  return missedRelease(clock) !== null;
+}
+
+// What the Orders page and the dashboard show for an Anchor row, worked out
+// on the server (clock: Vancouver's today and hour).
+export function externalDispatchRowView(
+  dispatch: { status: string; spokeStopId: string | null; scheduledDate: Date },
+  clock: { todayKey: string; vancouverHour: number }
+) {
+  const statusClock = {
+    status: dispatch.status,
+    scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
+    ...clock,
+  };
+  return {
+    canCancelExternal: canCancelExternalDispatch(dispatch),
+    statusLabel: externalStatusLabel(dispatch.status),
+    statusNote: externalStatusNote(statusClock),
+    needsAttention: externalNeedsAttention(statusClock),
+  };
+}
+
+// The Retry and Cancel links an Anchor row offers. canCancel comes from the
+// server (canCancelExternalDispatch); the status check keeps a stale row from
+// offering it.
+export function externalDispatchActions({
+  dispatchId,
+  status,
+  canCancel,
+}: {
+  dispatchId: string | null;
+  status: string;
+  canCancel: boolean;
+}) {
+  return {
+    retry: status === "DISPATCH_FAILED" && !!dispatchId,
+    cancel: canCancel && !!dispatchId && isCancellableExternalStatus(status),
+  };
 }
 
 export function cancelConfirmMessage(status: string) {
@@ -130,4 +217,52 @@ export function heldOrderHint(scheduledDateKey: string, todayKey: string) {
 
 export function heldOrderSavedMessage(scheduledDateKey: string, todayKey: string) {
   return `Saved. ${heldOrderHint(scheduledDateKey, todayKey)}`;
+}
+
+// New Order: the hint under the date, or null. Only an Anchor order dated
+// after today is held.
+export function newOrderAnchorHint({
+  isAnchor,
+  scheduledDateKey,
+  todayKey,
+}: {
+  isAnchor: boolean;
+  scheduledDateKey: string;
+  todayKey: string;
+}) {
+  return isAnchor && isHeldUntilDeliveryDay(scheduledDateKey, todayKey)
+    ? heldOrderHint(scheduledDateKey, todayKey)
+    : null;
+}
+
+// The toast after a save, or null: only when the server says it held an
+// Anchor order (the order POST's dispatch summary with status SCHEDULED).
+export function heldOrderToastMessage(saved: unknown, scheduledDateKey: string, todayKey: string) {
+  const body = saved && typeof saved === "object" ? (saved as Record<string, unknown>) : null;
+  return body?.external === true && typeof body.status === "string" && isHeldForRelease(body.status)
+    ? heldOrderSavedMessage(scheduledDateKey, todayKey)
+    : null;
+}
+
+// What happened to an earlier save, for the "already saved for another day"
+// message.
+function savedOrderOutcome(status: string) {
+  if (isHeldForRelease(status)) return "is waiting to go to Anchor";
+  if (status === "PENDING" || status === "STOP_CREATED") return "is being sent to Anchor";
+  if (status === "DISPATCH_FAILED") return "didn't reach Anchor";
+  if (status === "DELIVERED") return "was delivered by Anchor";
+  if (status === "DELIVERY_FAILED") return "Anchor couldn't deliver it";
+  return "is with Anchor";
+}
+
+// The order form saved this order before (same request) for another day, or
+// the earlier save can't simply be returned. Nothing is changed; staff sort
+// out the earlier one first. The form then starts a new request, so saving
+// again makes a new order.
+export function alreadySavedMessage(dispatch: { status: string; scheduledDateKey: string }, todayKey: string) {
+  const day = shortDayLabel(dispatch.scheduledDateKey, todayKey);
+  if (dispatch.status === "CANCELLED") {
+    return `This order was already saved for ${day} and then cancelled. Save it again to make a new order.`;
+  }
+  return `This order was already saved for ${day} and ${savedOrderOutcome(dispatch.status)}. Cancel that one on Orders first (and check Anchor's list if it may have been sent), then save it again for the new day.`;
 }

@@ -82,6 +82,7 @@ describe("cancelling an order not yet sent to Anchor", () => {
 
     expect(status).toBe(200);
     expect(body.message).toBe("Cancelled. It was never sent to Anchor.");
+    expect(body.needsCheck).toBeUndefined();
     expect(body.dispatch.status).toBe("CANCELLED");
     expect(table.row(waiting.id)).toMatchObject({ status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
     expect(mocks.deleteStop).not.toHaveBeenCalled();
@@ -94,6 +95,7 @@ describe("cancelling an order not yet sent to Anchor", () => {
 
     expect(status).toBe(200);
     expect(body.message).toContain("may have reached Anchor");
+    expect(body.needsCheck).toBe(true);
     expect(table.row(failed.id)).toMatchObject({ status: "CANCELLED", errorMessage: null });
     expect(mocks.deleteStop).not.toHaveBeenCalled();
   });
@@ -104,7 +106,26 @@ describe("cancelling an order not yet sent to Anchor", () => {
     const { body } = await cancel(sending.id);
 
     expect(body.message).toContain("may have reached Anchor");
+    expect(body.needsCheck).toBe(true);
     expect(table.row(sending.id).status).toBe("CANCELLED");
+  });
+
+  it("gives the warning when a release starts sending between the read and the write", async () => {
+    const waiting = table.addRow({ status: "SCHEDULED", workflowStep: "AWAITING_RELEASE" });
+    table.externalDispatch.findUnique.mockImplementationOnce(async (args) => {
+      const read = await table.impl.findUnique(args);
+      // The release claims it and calls Spoke.
+      table.row(waiting.id).workflowStep = "SENDING";
+      return read;
+    });
+
+    const { status, body } = await cancel(waiting.id);
+
+    expect(status).toBe(200);
+    expect(body.message).toContain("may have reached Anchor");
+    expect(body.needsCheck).toBe(true);
+    expect(table.row(waiting.id)).toMatchObject({ status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
+    expect(mocks.deleteStop).not.toHaveBeenCalled();
   });
 });
 
@@ -116,6 +137,7 @@ describe("cancelling an order in Anchor's unassigned list", () => {
 
     expect(status).toBe(200);
     expect(body.message).toBe("Cancelled and removed from Anchor's list.");
+    expect(body.needsCheck).toBeUndefined();
     expect(mocks.deleteStop).toHaveBeenCalledTimes(1);
     expect(mocks.deleteStop.mock.calls[0][1]).toEqual({ unassignedStopId: STOP, idempotencyKey: "order-1" });
     expect(table.row(sent.id)).toMatchObject({ status: "CANCELLED", responsePayload: { deleted: true } });
@@ -137,6 +159,7 @@ describe("cancelling an order in Anchor's unassigned list", () => {
 
     expect(status).toBe(200);
     expect(body.message).toContain("already gone");
+    expect(body.needsCheck).toBeUndefined();
     expect(table.row(sent.id).status).toBe("CANCELLED");
   });
 

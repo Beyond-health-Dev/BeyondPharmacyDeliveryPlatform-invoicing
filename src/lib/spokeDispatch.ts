@@ -1,7 +1,11 @@
 import { Prisma, type ExternalDispatch } from "@prisma/client";
 import { prisma } from "./db";
 import {
+  alreadySavedMessage,
+  CANCEL_CLEANUP_FAILED_STEP,
+  CANCELLED_BUT_ACTIVE_STEP,
   IN_FLIGHT_STEP,
+  isHeldForRelease,
   isSendableExternalStatus,
   SENDABLE_EXTERNAL_STATUSES,
 } from "./externalDispatchStatus";
@@ -15,6 +19,7 @@ import {
   type SpokeConfig,
   type SpokeOrderInput,
 } from "./spoke";
+import { vancouverTodayKey } from "./vancouverDate";
 
 interface SpokeProviderUser {
   id: string;
@@ -127,6 +132,69 @@ function idempotencyConflict() {
   return new SpokeDispatchError("Idempotency key conflict", 409, null, "IDEMPOTENCY");
 }
 
+function dateKeyOf(dispatch: Pick<ExternalDispatch, "scheduledDate">) {
+  return dispatch.scheduledDate.toISOString().slice(0, 10);
+}
+
+// The form keeps its request key after a server or network error, so a save
+// that failed and is then made for another day arrives with the same key.
+// The row stays exactly as it is; the order route answers 409 with this, and
+// the form starts a new request for the next save.
+function alreadySavedConflict(dispatch: ExternalDispatch) {
+  return new SpokeDispatchError(
+    alreadySavedMessage(
+      { status: dispatch.status, scheduledDateKey: dateKeyOf(dispatch) },
+      vancouverTodayKey()
+    ),
+    409,
+    null,
+    "IDEMPOTENCY"
+  );
+}
+
+// A row already saved under this request key, before anything is sent or
+// written: it must be this store's and for the same delivery day.
+function checkExistingRow(dispatch: ExternalDispatch, input: SpokeDispatchInput) {
+  if (dispatch.storeId !== input.store.id) throw idempotencyConflict();
+  if (dateKeyOf(dispatch) !== input.scheduledDateKey) throw alreadySavedConflict(dispatch);
+}
+
+// Rows no cancel-cleanup alert has been raised for yet (one per order).
+// workflowStep is nullable, and Prisma's notIn leaves NULL rows out, hence
+// the OR.
+const CANCEL_ALERT_NOT_RAISED = {
+  OR: [
+    { workflowStep: null },
+    { workflowStep: { notIn: [CANCEL_CLEANUP_FAILED_STEP, CANCELLED_BUT_ACTIVE_STEP] } },
+  ],
+};
+
+function cancelIncompleteMessage(dispatch: ExternalDispatch) {
+  return `The order for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) was cancelled here while it was being sent, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it.`;
+}
+
+async function alertCancelIncomplete(dispatch: ExternalDispatch) {
+  try {
+    await prisma.notification.create({
+      data: {
+        type: "SPOKE_CANCEL_INCOMPLETE",
+        message: cancelIncompleteMessage(dispatch),
+        storeId: dispatch.storeId,
+      },
+    });
+  } catch (err) {
+    console.error("[SPOKE] Failed to record cancel-incomplete notification:", err);
+  }
+}
+
+// Spoke may have made the stop even though the create call failed: no answer
+// (timeout or network), a server error, or a conflict. A refusal (400, 401,
+// 403, 404, 422, 429) means it didn't.
+function stopMayExistAfterFailure(err: SpokeDispatchError) {
+  const status = err.upstreamStatus;
+  return status === null || status >= 500 || status === 409;
+}
+
 // Two saves with the same key at once: the other one created the row first.
 async function findKeyRaceWinner(err: unknown, idempotencyKey: string) {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") {
@@ -202,29 +270,23 @@ async function withdrawStopAfterCancel(
   try {
     await prisma.externalDispatch.updateMany({
       where: { id: dispatch.id, status: "CANCELLED" },
-      data: {
-        spokeStopId: stopId,
-        externalReference: stopId,
-        workflowStep: removed ? "CANCEL_UNASSIGNED_STOP" : "CANCEL_CLEANUP_FAILED",
+      data: { spokeStopId: stopId, externalReference: stopId },
+    });
+    // Anchor's own update may have marked the row already (it went on to
+    // handle the order); that marker stays.
+    await prisma.externalDispatch.updateMany({
+      where: {
+        id: dispatch.id,
+        status: "CANCELLED",
+        OR: [{ workflowStep: null }, { workflowStep: { not: CANCELLED_BUT_ACTIVE_STEP } }],
       },
+      data: { workflowStep: removed ? "CANCEL_UNASSIGNED_STOP" : CANCEL_CLEANUP_FAILED_STEP },
     });
   } catch (err) {
     console.error(`[SPOKE] Failed to record the stop of cancelled order ${dispatch.id}:`, err);
   }
 
-  if (!removed) {
-    try {
-      await prisma.notification.create({
-        data: {
-          type: "SPOKE_CANCEL_INCOMPLETE",
-          message: `The order for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) was cancelled here while it was being sent, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it.`,
-          storeId: dispatch.storeId,
-        },
-      });
-    } catch (err) {
-      console.error("[SPOKE] Failed to record cancel-incomplete notification:", err);
-    }
-  }
+  if (!removed) await alertCancelIncomplete(dispatch);
 
   try {
     return (await prisma.externalDispatch.findUnique({ where: { id: dispatch.id } })) ?? dispatch;
@@ -242,6 +304,9 @@ export async function dispatchOrderToSpoke(
 ): Promise<SpokeDispatchResult> {
   // Set once the row is known to be this store's; the catch block marks it.
   let dispatchId: string | null = null;
+  // True while the create-stop call is out, so the catch knows a stop may
+  // exist at Spoke.
+  let creatingStop = false;
 
   try {
     let dispatch = await prisma.externalDispatch.findUnique({
@@ -249,7 +314,7 @@ export async function dispatchOrderToSpoke(
     });
 
     if (dispatch) {
-      if (dispatch.storeId !== input.store.id) throw idempotencyConflict();
+      checkExistingRow(dispatch, input);
       // Already sent, cancelled, or Anchor has it.
       if (!isSendableExternalStatus(dispatch.status)) {
         return { dispatch, alreadyDispatched: true };
@@ -274,7 +339,7 @@ export async function dispatchOrderToSpoke(
       } catch (err) {
         const winner = await findKeyRaceWinner(err, input.idempotencyKey);
         if (!winner) throw err;
-        if (winner.storeId !== input.store.id) throw idempotencyConflict();
+        checkExistingRow(winner, input);
         dispatch = winner;
       }
     }
@@ -303,10 +368,12 @@ export async function dispatchOrderToSpoke(
 
     let spokeStopId = dispatch.spokeStopId;
     if (!spokeStopId) {
+      creatingStop = true;
       const stopResult = await createSpokeUnassignedStop(spokeConfig, {
         stopPayload,
         idempotencyKey: input.idempotencyKey,
       });
+      creatingStop = false;
       spokeStopId = stopResult.stopId;
 
       const recorded = await prisma.externalDispatch.updateMany({
@@ -390,16 +457,19 @@ export async function dispatchOrderToSpoke(
       });
     });
 
-    return { dispatch: finalDispatch, alreadyDispatched: false };
+    // Cancelled after the stop was recorded: the cancel route removes the
+    // stop itself. Not counted as sent.
+    return { dispatch: finalDispatch, alreadyDispatched: finalDispatch.status === "CANCELLED" };
   } catch (err) {
     const spokeError = toSpokeDispatchError(err);
 
     if (dispatchId) {
+      let marked: boolean;
       try {
         // Only a row that could still be sent is marked failed (a failed
         // retry is re-marked with the new message). A cancel or webhook that
         // moved the row on in the meantime is kept.
-        await prisma.externalDispatch.updateMany({
+        const failed = await prisma.externalDispatch.updateMany({
           where: { id: dispatchId, status: { in: SENDABLE_EXTERNAL_STATUSES } },
           data: {
             status: "DISPATCH_FAILED",
@@ -408,13 +478,61 @@ export async function dispatchOrderToSpoke(
             errorMessage: spokeError.message,
           },
         });
+        marked = failed.count > 0;
       } catch (auditError) {
         console.warn("[SPOKE] Failed to update dispatch failure audit:", auditError);
+        throw spokeError;
+      }
+
+      // The row moved on while this send failed: cancelled here, or sent by
+      // another run (or Anchor has it). That outcome stands; this failure
+      // isn't the order's.
+      const latest = marked
+        ? null
+        : await prisma.externalDispatch.findUnique({ where: { id: dispatchId } }).catch(() => null);
+      if (latest && !isSendableExternalStatus(latest.status)) {
+        console.warn(
+          `[SPOKE] Send of order ${latest.id} failed after it became ${latest.status}; keeping ${latest.status}:`,
+          spokeError.message
+        );
+        if (
+          latest.status === "CANCELLED" &&
+          creatingStop &&
+          stopMayExistAfterFailure(spokeError)
+        ) {
+          await flagCancelledStopMayExist(latest);
+        }
+        return { dispatch: latest, alreadyDispatched: true };
       }
     }
 
     throw spokeError;
   }
+}
+
+// Cancelled during a create-stop call that failed in a way that may still
+// have made the stop at Spoke. Nobody knows its id, so staff remove it in
+// Spoke themselves. Never throws.
+async function flagCancelledStopMayExist(dispatch: ExternalDispatch) {
+  try {
+    const flagged = await prisma.externalDispatch.updateMany({
+      where: { id: dispatch.id, status: "CANCELLED", ...CANCEL_ALERT_NOT_RAISED },
+      data: { workflowStep: CANCEL_CLEANUP_FAILED_STEP },
+    });
+    if (flagged.count > 0) await alertCancelIncomplete(dispatch);
+  } catch (err) {
+    console.error(`[SPOKE] Failed to flag cancelled order ${dispatch.id}:`, err);
+  }
+}
+
+// A replayed hold (same request key): the row is returned exactly as it is
+// only while it is still held for that same day. Rewriting it could undo a
+// cancel, or put an order already sent back on hold, so anything else is
+// refused and staff sort out the earlier save first.
+function replayedHold(existing: ExternalDispatch, input: SpokeDispatchInput) {
+  checkExistingRow(existing, input);
+  if (!isHeldForRelease(existing.status)) throw alreadySavedConflict(existing);
+  return existing;
 }
 
 // Records a Spoke handoff WITHOUT contacting Spoke, for orders whose delivery
@@ -432,10 +550,7 @@ export async function scheduleDeferredSpokeDispatch(
     });
 
     if (existing) {
-      if (existing.storeId !== input.store.id) throw idempotencyConflict();
-      // A replayed save: leave the row exactly as it is. Rewriting it could
-      // undo a cancel, or put an order already sent back on hold.
-      return { dispatch: existing, alreadyDispatched: true };
+      return { dispatch: replayedHold(existing, input), alreadyDispatched: true };
     }
 
     // Build the same payload the release step will send, for the audit trail
@@ -471,8 +586,7 @@ export async function scheduleDeferredSpokeDispatch(
     } catch (err) {
       const winner = await findKeyRaceWinner(err, input.idempotencyKey);
       if (!winner) throw err;
-      if (winner.storeId !== input.store.id) throw idempotencyConflict();
-      return { dispatch: winner, alreadyDispatched: true };
+      return { dispatch: replayedHold(winner, input), alreadyDispatched: true };
     }
   } catch (err) {
     throw toSpokeDispatchError(err);

@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/ToastProvider";
-import { heldOrderSavedMessage, isHeldForRelease } from "@/lib/externalDispatchStatus";
+import { heldOrderToastMessage } from "@/lib/externalDispatchStatus";
 
 export interface CreateOrderInput {
   patientId: string | null;
@@ -83,9 +83,8 @@ export function useCreateOrder(storeSlug: string, { todayKey }: { todayKey: stri
           // so, and that it can still be cancelled. The toast outlives the
           // navigation (ToastProvider sits in the root layout).
           const saved = await res.json().catch(() => null);
-          if (saved?.external === true && typeof saved.status === "string" && isHeldForRelease(saved.status)) {
-            toast.success(heldOrderSavedMessage(input.scheduledDate, todayKey));
-          }
+          const heldMessage = heldOrderToastMessage(saved, input.scheduledDate, todayKey);
+          if (heldMessage) toast.success(heldMessage);
           // Deliberately keep loading/inFlight set: navigation to the orders
           // page is still in flight, and re-arming the button in that window
           // is how a same-tab double submission mints a duplicate delivery.

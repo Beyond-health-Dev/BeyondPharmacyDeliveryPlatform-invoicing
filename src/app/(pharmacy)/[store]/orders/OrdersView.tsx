@@ -52,10 +52,12 @@ export type SerializedOrder = {
   externalProvider: string | null;
   externalDispatchId: string | null;
   canCancelExternal: boolean;
-  // Anchor rows only (null in-house), worked out on the server: the badge
-  // text, and a short line under it such as when Anchor gets the order.
+  // Anchor rows only (null / false in-house), worked out on the server: the
+  // badge text, a short line under it such as when Anchor gets the order,
+  // and whether a held order missed its send (shown like a failed one).
   statusLabel: string | null;
   statusNote: string | null;
+  needsAttention: boolean;
 };
 
 // Presentational orders screen; the page supplies the data. Kept separate so

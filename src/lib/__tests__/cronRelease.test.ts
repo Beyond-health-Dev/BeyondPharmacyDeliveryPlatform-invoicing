@@ -74,14 +74,16 @@ describe("releaseDueSpokeDispatches", () => {
     expect(sentKeys()).toEqual(["order-kept"]);
   });
 
-  it("skips an order another run is sending right now", async () => {
+  it("sends an order marked as sending moments ago (that run may have been killed)", async () => {
+    // Overlapping runs send under the same idempotency key, and the sender's
+    // guarded writes settle the status; skipping it could leave it unsent.
     waiting("order-sending", "2026-11-23", {
       workflowStep: "SENDING",
       updatedAt: new Date(NOW.getTime() - 30 * 1000),
     });
 
-    expect(await release()).toBe(0);
-    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(await release()).toBe(1);
+    expect(sentKeys()).toEqual(["order-sending"]);
   });
 
   it("sends an order whose send was cut short a while ago", async () => {
@@ -112,9 +114,8 @@ describe("releaseDueSpokeDispatches", () => {
     expect(table.notifications).toHaveLength(1);
     const [alert] = table.notifications;
     expect(alert).toMatchObject({ type: "SPOKE_DISPATCH_FAILED", storeId: table.STORE.id });
-    expect(alert.message).toContain("Sam Gill (8120 128 St, Delta)");
-    expect(alert.message).toContain("NOT sent to Anchor");
-    expect(alert.message).toContain("Open Orders and press Retry");
-    expect(alert.message).not.toContain("Generate Today's Orders");
+    expect(alert.message).toBe(
+      "The waiting order for Sam Gill (8120 128 St, Delta) was NOT sent to Anchor: sending it failed. Open Orders and press Retry on it."
+    );
   });
 });

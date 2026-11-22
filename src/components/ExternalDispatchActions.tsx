@@ -1,19 +1,23 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useConfirm } from "@/components/ui/DialogsProvider";
 import { useToast } from "@/components/ui/ToastProvider";
-import { cancelConfirmMessage, isCancellableExternalStatus } from "@/lib/externalDispatchStatus";
-import { attentionLinkButton, cn, dangerLinkButton, linkButton } from "@/lib/portalStyles";
+import { cancelConfirmMessage, externalDispatchActions } from "@/lib/externalDispatchStatus";
+import { cn, dangerLinkButton, linkButton, tintedLinkButton } from "@/lib/portalStyles";
 
 interface ExternalDispatchActionsProps {
   dispatchId: string | null;
   currentStatus: string;
   canCancel: boolean;
   storeSlug: string;
+  // Names the buttons for screen readers ("Retry order for Riley Chen").
+  patientName: string;
   // The row has the blush failed fill.
   onAttentionRow?: boolean;
+  // Shown when the row offers no action: what an in-house row shows there.
+  noAction?: ReactNode;
 }
 
 export default function ExternalDispatchActions({
@@ -21,7 +25,9 @@ export default function ExternalDispatchActions({
   currentStatus,
   canCancel,
   storeSlug,
+  patientName,
   onAttentionRow = false,
+  noAction = null,
 }: ExternalDispatchActionsProps) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -30,45 +36,37 @@ export default function ExternalDispatchActions({
   // the two must never be sent at once.
   const [loading, setLoading] = useState<"retry" | "cancel" | null>(null);
   const inFlight = useRef(false);
+  // Rendered whatever the row shows, so focus has somewhere to stay when the
+  // pressed button goes away once the page refreshes.
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
-  if (currentStatus === "CANCELLED") {
-    return (
-      <span className="text-xs font-semibold text-ink">
-        Cancelled
-      </span>
-    );
-  }
+  const actions = externalDispatchActions({ dispatchId, status: currentStatus, canCancel });
 
-  const showRetry = currentStatus === "DISPATCH_FAILED" && !!dispatchId;
-  // canCancel comes from the server (canCancelExternalDispatch); the status
-  // check keeps a stale row from offering it.
-  const showCancel = canCancel && !!dispatchId && isCancellableExternalStatus(currentStatus);
-
-  if (!showRetry && !showCancel) {
-    return (
-      <span className="text-xs font-semibold text-ink">
-        External handoff
-      </span>
-    );
-  }
-
-  const run = async (action: "retry" | "cancel", send: () => Promise<void>) => {
+  // `send` resolves true when the action went through.
+  const run = async (action: "retry" | "cancel", send: () => Promise<boolean>) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setLoading(action);
+    let done = false;
     try {
-      await send();
+      done = await send();
     } finally {
       inFlight.current = false;
       setLoading(null);
     }
+    const wrapper = wrapperRef.current;
+    if (done && wrapper?.contains(document.activeElement)) wrapper.focus();
   };
 
   const retryDispatch = async () => {
+    // The buttons stay focusable while a request runs (aria-disabled).
+    if (inFlight.current) return;
     if (
-      !(await confirm(
-        "Retry sending this delivery to Spoke? The original request identity is reused, so this cannot create a duplicate stop."
-      ))
+      !(await confirm({
+        message: "Send this order to Anchor again?",
+        confirmLabel: "Send again",
+        cancelLabel: "Don't send",
+      }))
     ) {
       return;
     }
@@ -82,18 +80,21 @@ export default function ExternalDispatchActions({
 
         if (!res.ok) {
           const data = await res.json().catch(() => null);
-          toast.error(data?.error || "Failed to retry Spoke handoff");
-          return;
+          toast.error(data?.error || "Couldn't send this order to Anchor. Try again in a minute.");
+          return false;
         }
 
         router.refresh();
+        return true;
       } catch {
-        toast.error("Network error — the retry may not have been sent. Refresh and check the handoff status.");
+        toast.error("Network error. The order may or may not have reached Anchor. Refresh the page to see where it is.");
+        return false;
       }
     });
   };
 
   const cancelDispatch = async () => {
+    if (inFlight.current) return;
     if (
       !(await confirm({
         message: cancelConfirmMessage(currentStatus),
@@ -114,40 +115,63 @@ export default function ExternalDispatchActions({
         const data = await res.json().catch(() => null);
 
         if (!res.ok) {
-          toast.error(data?.error || "Failed to cancel Spoke handoff");
-          return;
+          toast.error(data?.error || "Couldn't cancel this order. Try again in a minute.");
+          return false;
         }
 
         // The route words its message for staff (never sent, removed from
-        // Anchor's list, or check Anchor's list).
-        toast.success(data?.message || "Cancelled.");
+        // Anchor's list, or check Anchor's list). One that asks staff to
+        // check Anchor's list stays up until dismissed.
+        const message = data?.message || "Cancelled.";
+        if (data?.needsCheck) {
+          toast.error(message);
+        } else {
+          toast.success(message);
+        }
         router.refresh();
+        return true;
       } catch {
-        toast.error("Network error — the cancellation may not have been sent. Refresh and check the handoff status.");
+        toast.error("Network error. The cancel may not have gone through. Refresh the page to see where the order is.");
+        return false;
       }
     });
   };
 
+  let content: ReactNode = noAction;
+  if (currentStatus === "CANCELLED") {
+    content = <span className="text-xs font-semibold text-ink">Cancelled</span>;
+  } else if (actions.retry || actions.cancel) {
+    content = (
+      <>
+        {actions.retry && (
+          <button
+            type="button"
+            onClick={retryDispatch}
+            aria-disabled={loading !== null}
+            aria-label={`${loading === "retry" ? "Retrying" : "Retry"} order for ${patientName}`}
+            className={cn(onAttentionRow ? tintedLinkButton : linkButton, "text-xs")}
+          >
+            {loading === "retry" ? "Retrying..." : "Retry"}
+          </button>
+        )}
+        {actions.cancel && (
+          <button
+            type="button"
+            onClick={cancelDispatch}
+            aria-disabled={loading !== null}
+            aria-label={`${loading === "cancel" ? "Cancelling" : "Cancel"} order for ${patientName}`}
+            className={cn(dangerLinkButton, "text-xs")}
+          >
+            {loading === "cancel" ? "Cancelling..." : "Cancel"}
+          </button>
+        )}
+      </>
+    );
+  }
+
   return (
-    <div className="flex items-center gap-3 whitespace-nowrap">
-      {showRetry && (
-        <button
-          onClick={retryDispatch}
-          disabled={loading !== null}
-          className={cn(onAttentionRow ? attentionLinkButton : linkButton, "text-xs")}
-        >
-          {loading === "retry" ? "Retrying..." : "Retry"}
-        </button>
-      )}
-      {showCancel && (
-        <button
-          onClick={cancelDispatch}
-          disabled={loading !== null}
-          className={cn(dangerLinkButton, "text-xs")}
-        >
-          {loading === "cancel" ? "Cancelling..." : "Cancel"}
-        </button>
-      )}
+    <div ref={wrapperRef} tabIndex={-1} className="flex items-center gap-3 whitespace-nowrap outline-none">
+      {content}
     </div>
   );
 }

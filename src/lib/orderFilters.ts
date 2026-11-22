@@ -10,9 +10,10 @@ import {
 export const WAITING_FILTER = "WAITING";
 export const NOT_CONFIRMED_FILTER = "NOT_CONFIRMED";
 
+// In capitals like the status pills beside them.
 export const ANCHOR_ORDER_FILTERS = [
-  { key: WAITING_FILTER, label: "Waiting" },
-  { key: NOT_CONFIRMED_FILTER, label: "Not confirmed" },
+  { key: WAITING_FILTER, label: "WAITING FOR ANCHOR" },
+  { key: NOT_CONFIRMED_FILTER, label: "NOT CONFIRMED BY ANCHOR" },
 ];
 
 function isAnchorOnlyFilter(status: string) {

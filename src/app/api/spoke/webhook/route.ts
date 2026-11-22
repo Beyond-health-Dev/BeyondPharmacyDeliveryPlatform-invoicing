@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { CANCELLED_BUT_ACTIVE_STEP } from "@/lib/externalDispatchStatus";
 import {
   canAdvanceDispatchStatus,
   mapSpokeWebhookStatus,
   verifySpokeSignature,
 } from "@/lib/spoke";
+
+// Events that mean Anchor allocated, routed or delivered the stop (or tried
+// to), as mapSpokeWebhookStatus maps them.
+const ANCHOR_ACTIVE_STATUSES = new Set([
+  "ALLOCATED",
+  "IN_TRANSIT",
+  "DEPARTED",
+  "DELIVERED",
+  "DELIVERY_FAILED",
+]);
 
 function asPrismaJson(value: unknown) {
   if (value === undefined || value === null) return Prisma.JsonNull;
@@ -124,10 +135,55 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, matched: 0 });
     }
 
-    // Settled handoffs stay exactly as recorded — late events can't even
+    // Delivered handoffs stay exactly as recorded — late events can't even
     // touch their payload/metadata.
-    if (dispatch.status === "DELIVERED" || dispatch.status === "CANCELLED") {
+    if (dispatch.status === "DELIVERED") {
       return NextResponse.json({ ok: true, matched: 0, ignored: true });
+    }
+
+    if (dispatch.status === "CANCELLED") {
+      // Anchor is handling an order cancelled here: a send that timed out
+      // after Spoke made the stop, or a stop that had moved onto a route
+      // when the cancel removed it. It stays cancelled (and its stop id is
+      // left alone: it is unique), but the event is kept and staff are told
+      // once.
+      if (isTrackingOnly || !ANCHOR_ACTIVE_STATUSES.has(mapped.status)) {
+        return NextResponse.json({ ok: true, matched: 0, ignored: true });
+      }
+      const eventData = {
+        lastWebhookEventType: eventType,
+        webhookPayload: asPrismaJson(eventPayload),
+      };
+      const flagged = await prisma.externalDispatch.updateMany({
+        where: {
+          id: dispatch.id,
+          status: "CANCELLED",
+          OR: [
+            { workflowStep: null },
+            { workflowStep: { not: CANCELLED_BUT_ACTIVE_STEP } },
+          ],
+        },
+        data: { ...eventData, workflowStep: CANCELLED_BUT_ACTIVE_STEP },
+      });
+      if (flagged.count === 0) {
+        await prisma.externalDispatch.updateMany({
+          where: { id: dispatch.id, status: "CANCELLED" },
+          data: eventData,
+        });
+        return NextResponse.json({ ok: true, matched: 1, cancelledHere: true });
+      }
+      try {
+        await prisma.notification.create({
+          data: {
+            type: "SPOKE_CANCEL_INCOMPLETE",
+            message: `Anchor has started handling an order that was cancelled here (${dispatch.patientName}, ${dispatch.deliveryAddress}, ${dispatch.deliveryCity}). Contact Anchor so it isn't delivered.`,
+            storeId: dispatch.storeId,
+          },
+        });
+      } catch (notifyErr) {
+        console.error("[SPOKE] Failed to record cancelled-but-active notification:", notifyErr);
+      }
+      return NextResponse.json({ ok: true, matched: 1, cancelledHere: true });
     }
 
     const advanceStatus =

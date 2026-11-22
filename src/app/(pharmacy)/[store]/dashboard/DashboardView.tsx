@@ -16,7 +16,7 @@ import {
   statusBadgeClasses,
   tableHeader,
   tableRow,
-  textLink,
+  tintedLinkButton,
 } from "@/lib/portalStyles";
 import { toneBadgeClasses } from "@/lib/statusTheme";
 
@@ -36,10 +36,15 @@ export type DashboardDelivery = {
   isExternal: boolean;
   externalDispatchId: string | null;
   canCancelExternal: boolean;
-  // Anchor rows only (null in-house), worked out on the server.
+  // Anchor rows only (null / false in-house), worked out on the server:
+  // badge text, a note under it, and whether a held order missed its send.
   statusLabel: string | null;
   statusNote: string | null;
+  needsAttention: boolean;
 };
+
+// The Actions cell of a row with nothing to do.
+const NO_ACTION = <span className="text-xs text-ink">-</span>;
 
 // Presentational dashboard; the page supplies the data. Kept separate so the
 // dev-only style guide can render it from fixtures.
@@ -67,9 +72,10 @@ export default function DashboardView({
         </Link>
       </PageHeader>
 
+      {/* Navy: the line sits partly over the header's pastel circle. */}
       {heldForAnchorCount > 0 && (
         <p className="-mt-4 mb-6 text-sm">
-          <Link href={`/${storeSlug}/orders?status=${WAITING_FILTER}`} className={textLink}>
+          <Link href={`/${storeSlug}/orders?status=${WAITING_FILTER}`} className={tintedLinkButton}>
             {heldForAnchorCount} {heldForAnchorCount === 1 ? "order" : "orders"} waiting to go to Anchor
           </Link>
         </p>
@@ -112,7 +118,8 @@ export default function DashboardView({
                 </thead>
                 <tbody className="divide-y divide-hairline">
                   {deliveries.map((order) => {
-                    const failed = FAILED_STATUSES.has(order.status);
+                    // Failed, or a held Anchor order that missed its send.
+                    const failed = FAILED_STATUSES.has(order.status) || order.needsAttention;
                     return (
                       <tr
                         key={order.id}
@@ -134,12 +141,13 @@ export default function DashboardView({
                         </td>
                         <td className="px-6 py-4">
                           {/* On the blush failed row, the chip turns white to stay visible.
-                              No wrapping: the table scrolls sideways on a phone instead. */}
+                              The chip doesn't wrap (the table scrolls sideways on a phone
+                              instead); a note, which can run to two sentences, does. */}
                           <span className={cn(failed ? toneBadgeClasses("white") : statusBadgeClasses(order.status), "whitespace-nowrap")}>
                             {order.statusLabel ?? order.status.replace(/_/g, " ")}
                           </span>
                           {order.statusNote && (
-                            <p className={cn("mt-1 whitespace-nowrap text-xs font-medium", failed ? "text-navy" : "text-muted")}>
+                            <p className={cn("mt-1 min-w-48 max-w-64 text-xs font-medium", failed ? "text-navy" : "text-muted")}>
                               {order.statusNote}
                             </p>
                           )}
@@ -160,10 +168,12 @@ export default function DashboardView({
                               currentStatus={order.status}
                               canCancel={order.canCancelExternal}
                               storeSlug={storeSlug}
+                              patientName={order.patientName}
                               onAttentionRow={failed}
+                              noAction={NO_ACTION}
                             />
                           ) : (
-                            <span className="text-xs text-ink">-</span>
+                            NO_ACTION
                           )}
                         </td>
                       </tr>

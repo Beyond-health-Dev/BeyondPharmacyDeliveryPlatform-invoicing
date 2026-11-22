@@ -74,7 +74,7 @@ export async function DELETE(
     });
 
     if (!dispatch || dispatch.storeId !== store.id || dispatch.provider !== "SPOKE") {
-      return NextResponse.json({ error: "External dispatch not found" }, { status: 404 });
+      return NextResponse.json({ error: "This Anchor order wasn't found. Refresh the page." }, { status: 404 });
     }
 
     if (dispatch.status === "CANCELLED") {
@@ -95,11 +95,15 @@ export async function DELETE(
       // One guarded statement: if the sender records a stop first, this
       // matches nothing and the next pass removes that stop at Spoke instead.
       // If this wins, the sender sees the cancel and removes its own stop.
+      // The step read above is part of the guard: a release that started
+      // sending since then forces the re-read, so the reply below says the
+      // send may have reached Anchor.
       const cancelled = await prisma.externalDispatch.updateMany({
         where: {
           id: dispatch.id,
           status: { in: CANCELLABLE_EXTERNAL_STATUSES },
           spokeStopId: null,
+          workflowStep: dispatch.workflowStep,
         },
         data: {
           status: "CANCELLED",
@@ -113,10 +117,12 @@ export async function DELETE(
       // stop being recorded here.
       const mayHaveReachedAnchor =
         dispatch.status === "DISPATCH_FAILED" || dispatch.workflowStep === IN_FLIGHT_STEP;
+      // needsCheck: the screen keeps this reply up until staff dismiss it.
       return NextResponse.json({
         message: mayHaveReachedAnchor
           ? "Cancelled here, but the earlier send may have reached Anchor. Check Anchor's list in Spoke and remove it there if it shows up."
           : "Cancelled. It was never sent to Anchor.",
+        ...(mayHaveReachedAnchor ? { needsCheck: true } : {}),
         dispatch: await prisma.externalDispatch.findUniqueOrThrow({ where: { id: dispatch.id } }),
       });
     }

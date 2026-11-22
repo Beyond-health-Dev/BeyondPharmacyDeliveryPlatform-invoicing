@@ -12,10 +12,10 @@ import { UNCONFIRMED_EXTERNAL_STATUSES } from "@/lib/externalDispatchStatus";
 const todayStart = new Date("2026-11-22T00:00:00.000Z");
 
 describe("Orders page Anchor filters", () => {
-  it("labels the pills in plain words", () => {
+  it("labels the pills in plain words, in capitals like the status pills", () => {
     expect(ANCHOR_ORDER_FILTERS).toEqual([
-      { key: "WAITING", label: "Waiting" },
-      { key: "NOT_CONFIRMED", label: "Not confirmed" },
+      { key: "WAITING", label: "WAITING FOR ANCHOR" },
+      { key: "NOT_CONFIRMED", label: "NOT CONFIRMED BY ANCHOR" },
     ]);
   });
 

@@ -57,6 +57,23 @@ function heldAnchorOrder(body: unknown): Response | null {
   );
 }
 
+// Cancel and Retry on an Anchor row answer as the routes do, so the toasts
+// can be seen. The failed send (x2) may have reached Anchor, so its cancel
+// asks staff to check Anchor's list.
+function anchorAction(path: string, method: string): Response | null {
+  const match = path.match(/^external-dispatches\/([^/]+)(\/retry)?$/);
+  if (!match) return null;
+  if (method === "POST" && match[2]) return json({ message: "Sent to Anchor." });
+  if (method !== "DELETE" || match[2]) return null;
+  return match[1] === "x2"
+    ? json({
+        message:
+          "Cancelled here, but the earlier send may have reached Anchor. Check Anchor's list in Spoke and remove it there if it shows up.",
+        needsCheck: true,
+      })
+    : json({ message: "Cancelled. It was never sent to Anchor." });
+}
+
 function answer(url: URL, method: string, body: unknown): Response {
   // /api/<store>/<...rest>
   const [, , ...rest] = url.pathname.split("/").filter(Boolean);
@@ -66,6 +83,8 @@ function answer(url: URL, method: string, body: unknown): Response {
     const held = heldAnchorOrder(body);
     if (held) return held;
   }
+  const action = anchorAction(path, method);
+  if (action) return action;
   if (method !== "GET" && method !== "HEAD") return json({ ok: true });
   if (path === "recurring/labels") {
     return json({ error: "Label PDFs need the real server — the style guide has no database." }, 404);

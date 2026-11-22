@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
-import { IN_FLIGHT_STEP, isHeldForRelease } from "./externalDispatchStatus";
+import { isHeldForRelease } from "./externalDispatchStatus";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -19,9 +19,6 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 // Stop the generation run before the platform's 60s function limit kills it
 // mid-loop (Spoke's 5 req/s write cap makes large dispatch batches slow).
 const GENERATION_TIME_BUDGET_MS = 50_000;
-// A release marked as sending more recently than this is still in progress
-// in another run; an older mark is a send that was cut short.
-const IN_FLIGHT_WINDOW_MS = 2 * 60 * 1000;
 
 let initialized = false;
 
@@ -78,6 +75,8 @@ interface RecurrenceSchedule {
 
 export interface RecurringGenerationResult {
   dateKey: string;
+  // Waiting (later-dated) Anchor orders this run sent, before the profiles.
+  released: number;
   total: number;
   due: number;
   created: number;
@@ -131,7 +130,17 @@ export function isVancouverSixAmWindow(now = new Date()) {
   return parts.find((p) => p.type === "hour")?.value === "06";
 }
 
+// Staff press Generate to send a waiting Anchor order that missed 6 AM, so
+// those come first.
 export function formatGenerationMessage(result: RecurringGenerationResult) {
+  const released =
+    result.released > 0
+      ? `${result.released} waiting Anchor order${result.released === 1 ? "" : "s"} sent. `
+      : "";
+  return `${released}${formatProfileMessage(result)}`;
+}
+
+function formatProfileMessage(result: RecurringGenerationResult) {
   if (result.unprocessed > 0) {
     return `${result.created} order${result.created === 1 ? "" : "s"} generated before the time limit — ${result.unprocessed} profile(s) remaining. Click "Generate Today's Orders" again to continue.`;
   }
@@ -541,7 +550,7 @@ export async function generateRecurringOrders(
           await prisma.notification.create({
             data: {
               type: "SPOKE_DISPATCH_FAILED",
-              message: `Spoke dispatch failed for ${recurring.patientName} (${recurring.deliveryAddress}, ${recurring.deliveryCity}) — today's delivery was NOT sent to Spoke. Use "Generate Today's Orders" to retry.`,
+              message: `Today's recurring order for ${recurring.patientName} (${recurring.deliveryAddress}, ${recurring.deliveryCity}) was NOT sent to Anchor: sending it failed. Press "Generate Today's Orders" on Recurring to try again.`,
               storeId: recurring.storeId,
             },
           });
@@ -644,6 +653,7 @@ export async function generateRecurringOrders(
   console.log(`[CRON] Generated ${created} recurring orders for ${deliveryDate.dateKey}`);
   return {
     dateKey: deliveryDate.dateKey,
+    released: releasedDispatches,
     total: recurringOrders.length,
     due,
     created,
@@ -675,18 +685,14 @@ export async function releaseDueSpokeDispatches(
   let released = 0;
   for (const dispatch of dueDispatches) {
     // Re-read just before sending: the order may have been cancelled (or sent)
-    // since the list above was read, or another run may be sending it now.
+    // since the list above was read. One another run is sending right now is
+    // sent again under the same idempotency key (Spoke makes one stop), and
+    // the sender's guarded writes settle the status.
     const current = await prisma.externalDispatch.findUnique({
       where: { id: dispatch.id },
-      select: { status: true, workflowStep: true, updatedAt: true },
+      select: { status: true },
     });
     if (!current || !isHeldForRelease(current.status)) continue;
-    if (
-      current.workflowStep === IN_FLIGHT_STEP &&
-      Date.now() - current.updatedAt.getTime() < IN_FLIGHT_WINDOW_MS
-    ) {
-      continue;
-    }
 
     try {
       const result = await dispatchOrderToSpoke({
@@ -733,7 +739,7 @@ export async function releaseDueSpokeDispatches(
         await prisma.notification.create({
           data: {
             type: "SPOKE_DISPATCH_FAILED",
-            message: `Spoke dispatch failed for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) — the scheduled delivery was NOT sent to Anchor. Open Orders and press Retry on it.`,
+            message: `The waiting order for ${dispatch.patientName} (${dispatch.deliveryAddress}, ${dispatch.deliveryCity}) was NOT sent to Anchor: sending it failed. Open Orders and press Retry on it.`,
             storeId: dispatch.storeId,
           },
         });

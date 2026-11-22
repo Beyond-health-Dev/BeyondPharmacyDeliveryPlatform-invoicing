@@ -3,11 +3,7 @@ import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import { recurringPeopleMatch } from "@/lib/recurringDuplicateGuard";
 import { getVancouverDeliveryDateInfo } from "@/lib/cron";
-import {
-  canCancelExternalDispatch,
-  externalStatusLabel,
-  externalStatusNote,
-} from "@/lib/externalDispatchStatus";
+import { externalDispatchRowView } from "@/lib/externalDispatchStatus";
 import { vancouverHour } from "@/lib/vancouverDate";
 import type { Prisma } from "@prisma/client";
 import DashboardView, { type DashboardDelivery } from "./DashboardView";
@@ -76,6 +72,7 @@ function toDashboardDelivery(order: DashboardOrder): DashboardDelivery {
     canCancelExternal: false,
     statusLabel: null,
     statusNote: null,
+    needsAttention: false,
   };
 }
 
@@ -95,13 +92,7 @@ function toExternalDashboardDelivery(
     createdAt: dispatch.createdAt,
     isExternal: true,
     externalDispatchId: dispatch.id,
-    canCancelExternal: canCancelExternalDispatch(dispatch),
-    statusLabel: externalStatusLabel(dispatch.status),
-    statusNote: externalStatusNote({
-      status: dispatch.status,
-      scheduledDateKey: dispatch.scheduledDate.toISOString().slice(0, 10),
-      ...clock,
-    }),
+    ...externalDispatchRowView(dispatch, clock),
   };
 }
 

@@ -1,19 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
+  alreadySavedMessage,
   canCancelExternalDispatch,
   cancelConfirmMessage,
   CANCELLABLE_EXTERNAL_STATUSES,
+  externalDispatchActions,
+  externalDispatchRowView,
+  externalNeedsAttention,
   externalStatusLabel,
   externalStatusNote,
   heldOrderHint,
   heldOrderSavedMessage,
+  heldOrderToastMessage,
   isCancellableExternalStatus,
   isHeldForRelease,
   isHeldUntilDeliveryDay,
   isSendableExternalStatus,
+  mayStillBeWithAnchorAfterCancel,
+  newOrderAnchorHint,
   SENDABLE_EXTERNAL_STATUSES,
   UNCONFIRMED_EXTERNAL_STATUSES,
 } from "@/lib/externalDispatchStatus";
+import { statusBadgeClasses, statusTone } from "@/lib/statusTheme";
 
 describe("external dispatch status lists", () => {
   it("can still send from waiting, pending, stop-created and failed rows", () => {
@@ -72,8 +80,14 @@ describe("canCancelExternalDispatch", () => {
 });
 
 describe("externalStatusLabel", () => {
-  it("reads 'Waiting to send' while an order is held", () => {
-    expect(externalStatusLabel("SCHEDULED")).toBe("Waiting to send");
+  it("reads 'WAITING TO SEND' while an order is held, in capitals like the other badges", () => {
+    expect(externalStatusLabel("SCHEDULED")).toBe("WAITING TO SEND");
+  });
+
+  it("colours a held order as waiting, not like one Anchor has", () => {
+    expect(statusTone("SCHEDULED")).toBe("butter");
+    expect(statusBadgeClasses("SCHEDULED")).toBe(statusBadgeClasses("PENDING"));
+    expect(statusBadgeClasses("SCHEDULED")).not.toBe(statusBadgeClasses("SUBMITTED"));
   });
 
   it("shows every other status as the screens always have", () => {
@@ -101,10 +115,29 @@ describe("externalStatusNote", () => {
     expect(note("SCHEDULED", todayKey, 6)).toBe("Goes to Anchor about 6 AM today");
   });
 
-  it("flags a held order the run missed: today from 7 AM, or a past day", () => {
-    expect(note("SCHEDULED", todayKey, 7)).toBe("Not sent to Anchor yet");
-    expect(note("SCHEDULED", todayKey, 15)).toBe("Not sent to Anchor yet");
-    expect(note("SCHEDULED", "2026-11-21", 3)).toBe("Not sent to Anchor yet");
+  it("tells staff how to send a held order the 6 AM run missed today", () => {
+    const missed =
+      "Missed the 6 AM send. Anchor doesn't have it yet. Press Generate Today's Orders on Recurring to send it.";
+    expect(note("SCHEDULED", todayKey, 7)).toBe(missed);
+    expect(note("SCHEDULED", todayKey, 15)).toBe(missed);
+    expect(note("SCHEDULED", todayKey, 23)).toBe(missed);
+  });
+
+  it("says when an overdue held order was due, whatever the hour", () => {
+    expect(note("SCHEDULED", "2026-11-21", 3)).toBe(
+      "Was due Sat, Nov 21. Anchor doesn't have it. Send it with Generate Today's Orders on Recurring, or cancel it."
+    );
+    expect(note("SCHEDULED", "2026-11-14", 11)).toBe(
+      "Was due Sat, Nov 14. Anchor doesn't have it. Send it with Generate Today's Orders on Recurring, or cancel it."
+    );
+    expect(note("SCHEDULED", "2025-12-31", 11)).toContain("Was due Wed, Dec 31, 2025.");
+  });
+
+  it("says what to do about a failed send or delivery", () => {
+    expect(note("DISPATCH_FAILED", todayKey)).toBe("Didn't reach Anchor. Press Retry to send it again.");
+    expect(note("DISPATCH_FAILED", "2026-11-20")).toBe("Didn't reach Anchor. Press Retry to send it again.");
+    expect(note("DELIVERY_FAILED", todayKey)).toBe("Anchor couldn't deliver it.");
+    expect(note("DELIVERY_FAILED", "2026-11-20")).toBe("Anchor couldn't deliver it.");
   });
 
   it("flags a past order Anchor never confirmed", () => {
@@ -117,9 +150,128 @@ describe("externalStatusNote", () => {
     expect(note("SUBMITTED", todayKey)).toBeNull();
     expect(note("ALLOCATED", todayKey, 23)).toBeNull();
     expect(note("DELIVERED", "2026-11-20")).toBeNull();
-    expect(note("DELIVERY_FAILED", "2026-11-20")).toBeNull();
-    expect(note("DISPATCH_FAILED", "2026-11-20")).toBeNull();
     expect(note("CANCELLED", "2026-11-20")).toBeNull();
+  });
+});
+
+describe("externalNeedsAttention (a held order that missed its send)", () => {
+  const todayKey = "2026-11-22";
+  const attention = (status: string, scheduledDateKey: string, vancouverHour: number) =>
+    externalNeedsAttention({ status, scheduledDateKey, todayKey, vancouverHour });
+
+  it("flags a held order still here after the 6 o'clock hour, or dated a past day", () => {
+    expect(attention("SCHEDULED", todayKey, 7)).toBe(true);
+    expect(attention("SCHEDULED", todayKey, 18)).toBe(true);
+    expect(attention("SCHEDULED", "2026-11-21", 2)).toBe(true);
+  });
+
+  it("leaves a held order alone until the 6 AM run has had its hour", () => {
+    expect(attention("SCHEDULED", todayKey, 0)).toBe(false);
+    expect(attention("SCHEDULED", todayKey, 6)).toBe(false);
+    expect(attention("SCHEDULED", "2026-11-23", 23)).toBe(false);
+  });
+
+  it("is only for held orders (failed ones are already shown as failed)", () => {
+    for (const status of ["SUBMITTED", "DISPATCH_FAILED", "DELIVERY_FAILED", "CANCELLED", "ALLOCATED"]) {
+      expect(attention(status, "2026-11-20", 11)).toBe(false);
+    }
+  });
+});
+
+describe("externalDispatchRowView (an Anchor row on Orders and the dashboard)", () => {
+  const clock = { todayKey: "2026-11-22", vancouverHour: 11 };
+  const midnight = (key: string) => new Date(`${key}T00:00:00.000Z`);
+
+  it("offers Cancel on a held order with no stop, and says when Anchor gets it", () => {
+    expect(
+      externalDispatchRowView({ status: "SCHEDULED", spokeStopId: null, scheduledDate: midnight("2026-11-23") }, clock)
+    ).toEqual({
+      canCancelExternal: true,
+      statusLabel: "WAITING TO SEND",
+      statusNote: "Goes to Anchor about 6 AM tomorrow",
+      needsAttention: false,
+    });
+  });
+
+  it("doesn't offer Cancel once the stop is on one of Anchor's routes", () => {
+    expect(
+      externalDispatchRowView(
+        { status: "SUBMITTED", spokeStopId: "plans/p1/stops/s1", scheduledDate: midnight("2026-11-22") },
+        clock
+      )
+    ).toEqual({ canCancelExternal: false, statusLabel: "SUBMITTED", statusNote: null, needsAttention: false });
+  });
+
+  it("flags an overdue held order for attention", () => {
+    const row = externalDispatchRowView(
+      { status: "SCHEDULED", spokeStopId: null, scheduledDate: midnight("2026-11-21") },
+      clock
+    );
+    expect(row).toMatchObject({ canCancelExternal: true, statusLabel: "WAITING TO SEND", needsAttention: true });
+    expect(row.statusNote).toMatch(/^Was due Sat, Nov 21\./);
+  });
+
+  it("flags a held order for today that missed the 6 AM send", () => {
+    expect(
+      externalDispatchRowView({ status: "SCHEDULED", spokeStopId: null, scheduledDate: midnight("2026-11-22") }, clock)
+    ).toMatchObject({ needsAttention: true, statusNote: expect.stringMatching(/^Missed the 6 AM send/) });
+  });
+});
+
+describe("externalDispatchActions", () => {
+  it("offers Retry and Cancel on a failed send", () => {
+    expect(externalDispatchActions({ dispatchId: "d1", status: "DISPATCH_FAILED", canCancel: true })).toEqual({
+      retry: true,
+      cancel: true,
+    });
+  });
+
+  it("offers only Cancel on a held order, and nothing once Anchor has it", () => {
+    expect(externalDispatchActions({ dispatchId: "d1", status: "SCHEDULED", canCancel: true })).toEqual({
+      retry: false,
+      cancel: true,
+    });
+    expect(externalDispatchActions({ dispatchId: "d1", status: "ALLOCATED", canCancel: true })).toEqual({
+      retry: false,
+      cancel: false,
+    });
+    expect(externalDispatchActions({ dispatchId: null, status: "DISPATCH_FAILED", canCancel: true })).toEqual({
+      retry: false,
+      cancel: false,
+    });
+  });
+});
+
+describe("mayStillBeWithAnchorAfterCancel", () => {
+  it("is true for a cancelled order whose stop may be left at Anchor", () => {
+    expect(mayStillBeWithAnchorAfterCancel({ status: "CANCELLED", workflowStep: "CANCEL_CLEANUP_FAILED" })).toBe(true);
+    expect(mayStillBeWithAnchorAfterCancel({ status: "CANCELLED", workflowStep: "CANCELLED_BUT_ACTIVE" })).toBe(true);
+  });
+
+  it("is false for a clean cancel, or an order that isn't cancelled", () => {
+    expect(mayStillBeWithAnchorAfterCancel({ status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" })).toBe(false);
+    expect(mayStillBeWithAnchorAfterCancel({ status: "CANCELLED", workflowStep: null })).toBe(false);
+    expect(mayStillBeWithAnchorAfterCancel({ status: "SUBMITTED", workflowStep: "CANCEL_CLEANUP_FAILED" })).toBe(false);
+  });
+});
+
+describe("alreadySavedMessage (same request saved before)", () => {
+  it("names the day it was saved for and what happened to it", () => {
+    expect(alreadySavedMessage({ status: "DISPATCH_FAILED", scheduledDateKey: "2026-11-22" }, "2026-11-22")).toBe(
+      "This order was already saved for Sun, Nov 22 and didn't reach Anchor. Cancel that one on Orders first (and check Anchor's list if it may have been sent), then save it again for the new day."
+    );
+    expect(alreadySavedMessage({ status: "SCHEDULED", scheduledDateKey: "2026-11-23" }, "2026-11-22")).toContain(
+      "already saved for Mon, Nov 23 and is waiting to go to Anchor."
+    );
+    expect(alreadySavedMessage({ status: "PENDING", scheduledDateKey: "2026-11-22" }, "2026-11-22")).toContain(
+      "and is being sent to Anchor."
+    );
+  });
+
+  it("tells staff to just save again when the earlier one was cancelled", () => {
+    expect(alreadySavedMessage({ status: "CANCELLED", scheduledDateKey: "2026-11-23" }, "2026-11-22")).toBe(
+      "This order was already saved for Mon, Nov 23 and then cancelled. Save it again to make a new order."
+    );
   });
 });
 
@@ -168,5 +320,27 @@ describe("held new orders (New Order hint and saved toast)", () => {
     expect(heldOrderSavedMessage("2026-11-23", "2026-11-22")).toBe(
       "Saved. Anchor gets this order about 6 AM tomorrow. You can cancel it before then."
     );
+  });
+
+  it("shows the hint on New Order only for an Anchor order dated after today", () => {
+    expect(newOrderAnchorHint({ isAnchor: true, scheduledDateKey: "2026-11-23", todayKey: "2026-11-22" })).toBe(
+      "Anchor gets this order about 6 AM tomorrow. You can cancel it before then."
+    );
+    expect(newOrderAnchorHint({ isAnchor: true, scheduledDateKey: "2026-11-22", todayKey: "2026-11-22" })).toBeNull();
+    expect(newOrderAnchorHint({ isAnchor: false, scheduledDateKey: "2026-11-23", todayKey: "2026-11-22" })).toBeNull();
+    // The form refreshed its today after midnight: tomorrow's order is now today's.
+    expect(newOrderAnchorHint({ isAnchor: true, scheduledDateKey: "2026-11-23", todayKey: "2026-11-23" })).toBeNull();
+  });
+
+  it("toasts after saving only when the server held an Anchor order", () => {
+    const summary = (status: string) => ({ external: true, provider: "SPOKE", dispatchId: "d1", status });
+    expect(heldOrderToastMessage(summary("SCHEDULED"), "2026-11-24", "2026-11-22")).toBe(
+      "Saved. Anchor gets this order about 6 AM on Tue, Nov 24. You can cancel it before then."
+    );
+    // Sent at once, an in-house order, or no body.
+    expect(heldOrderToastMessage(summary("SUBMITTED"), "2026-11-22", "2026-11-22")).toBeNull();
+    expect(heldOrderToastMessage({ id: "o1", status: "PENDING" }, "2026-11-23", "2026-11-22")).toBeNull();
+    expect(heldOrderToastMessage({ id: "o1", status: "SCHEDULED" }, "2026-11-23", "2026-11-22")).toBeNull();
+    expect(heldOrderToastMessage(null, "2026-11-23", "2026-11-22")).toBeNull();
   });
 });

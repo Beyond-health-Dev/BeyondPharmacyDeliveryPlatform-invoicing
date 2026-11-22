@@ -13,6 +13,7 @@ import {
   linkButton,
   sectionTitle,
   statusBadgeClasses,
+  tintedLinkButton,
 } from "@/lib/portalStyles";
 import { BANNER_CLASSES } from "@/lib/statusTheme";
 import {
@@ -585,7 +586,7 @@ export default function RecurringOrderList({
                                 type="button"
                                 onClick={confirmZoneAndReassign}
                                 disabled={!zoneConfirm.zoneId || loading === order.id}
-                                className="text-xs font-bold text-navy underline-offset-2 hover:underline disabled:opacity-50"
+                                className={cn(tintedLinkButton, "text-xs")}
                               >
                                 Confirm
                               </button>

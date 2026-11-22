@@ -14,7 +14,7 @@ import type DeliveryList from "@/app/(driver)/[store]/deliveries/DeliveryList";
 import type { DeliveryDetailOrder } from "@/app/(driver)/[store]/deliver/[id]/DeliveryDetailView";
 import type { EarningsDelivery } from "@/app/(driver)/[store]/earnings/EarningsView";
 import type { ZoneHistory } from "@/lib/zoneSuggestion";
-import { externalStatusLabel, externalStatusNote } from "@/lib/externalDispatchStatus";
+import { externalDispatchRowView } from "@/lib/externalDispatchStatus";
 import { vancouverTodayKey, vancouverWeekStartKey } from "@/lib/vancouverDate";
 
 // Links and API calls inside fixture screens use this slug; the dev fetch
@@ -60,24 +60,26 @@ function at(time: string) {
   return new Date(`${TODAY}T${time}:00.000Z`);
 }
 
-// The badge text and note the pages work out on the server for an Anchor
-// row (11 AM, as the screenshot script's browser clock).
-function anchorStatus(status: string, dateKey: string) {
-  return {
-    statusLabel: externalStatusLabel(status),
-    statusNote: externalStatusNote({ status, scheduledDateKey: dateKey, todayKey: TODAY, vancouverHour: 11 }),
-  };
+// What the pages work out on the server for an Anchor row (cancel, badge
+// text, note, attention look), at 11 AM like the screenshot script's clock.
+function anchorStatus(status: string, dateKey: string, spokeStopId: string | null = null) {
+  return externalDispatchRowView(
+    { status, spokeStopId, scheduledDate: new Date(`${dateKey}T00:00:00.000Z`) },
+    { todayKey: TODAY, vancouverHour: 11 }
+  );
 }
-const IN_HOUSE_STATUS = { statusLabel: null, statusNote: null };
+const IN_HOUSE_STATUS = { statusLabel: null, statusNote: null, needsAttention: false };
 
 export const dashboardDeliveries: DashboardDelivery[] = [
   { id: "o1", patientName: "Avery Sandhu", deliveryAddress: "14250 88 Ave", deliveryCity: "Surrey", driverName: "Derek Olsen", status: "ASSIGNED", priceAtCreation: 4.25, failedReason: null, createdAt: at("17:10"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
-  { id: "external-x1", patientName: "Jordan Kaur", deliveryAddress: "6620 King George Blvd", deliveryCity: "Surrey", driverName: "Anchor", status: "SUBMITTED", priceAtCreation: 4.25, failedReason: null, createdAt: at("16:55"), isExternal: true, externalDispatchId: "x1", canCancelExternal: true, ...anchorStatus("SUBMITTED", TODAY) },
+  { id: "external-x1", patientName: "Jordan Kaur", deliveryAddress: "6620 King George Blvd", deliveryCity: "Surrey", driverName: "Anchor", status: "SUBMITTED", priceAtCreation: 4.25, failedReason: null, createdAt: at("16:55"), isExternal: true, externalDispatchId: "x1", ...anchorStatus("SUBMITTED", TODAY, "unassignedStops/u1") },
+  // Held for today's 6 AM run, still here at 11: shown like a failure.
+  { id: "external-x6", patientName: "Harper Mann", deliveryAddress: "12101 72 Ave", deliveryCity: "Surrey", driverName: "Anchor", status: "SCHEDULED", priceAtCreation: 4.25, failedReason: null, createdAt: at("16:40"), isExternal: true, externalDispatchId: "x6", ...anchorStatus("SCHEDULED", TODAY) },
   { id: "o2", patientName: "Riley Chen", deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", driverName: "Derek Olsen", status: "PICKED_UP", priceAtCreation: 4.25, failedReason: null, createdAt: at("16:20"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
   { id: "o3", patientName: "Morgan Patel", deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", driverName: "Derek Olsen", status: "FAILED", priceAtCreation: 4.25, failedReason: "No one home — left a card", createdAt: at("15:45"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
   // Never reached Anchor: Retry and Cancel side by side.
-  { id: "external-x2", patientName: "Sam Gill", deliveryAddress: "7380 120 St", deliveryCity: "Delta", driverName: "Anchor", status: "DISPATCH_FAILED", priceAtCreation: 4.25, failedReason: "Spoke did not respond", createdAt: at("15:30"), isExternal: true, externalDispatchId: "x2", canCancelExternal: true, ...anchorStatus("DISPATCH_FAILED", TODAY) },
-  { id: "external-x5", patientName: "Alex Grewal", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: "Anchor", status: "DELIVERY_FAILED", priceAtCreation: 5.25, failedReason: null, createdAt: at("15:20"), isExternal: true, externalDispatchId: "x5", canCancelExternal: false, ...anchorStatus("DELIVERY_FAILED", TODAY) },
+  { id: "external-x2", patientName: "Sam Gill", deliveryAddress: "7380 120 St", deliveryCity: "Delta", driverName: "Anchor", status: "DISPATCH_FAILED", priceAtCreation: 4.25, failedReason: "Spoke did not respond", createdAt: at("15:30"), isExternal: true, externalDispatchId: "x2", ...anchorStatus("DISPATCH_FAILED", TODAY) },
+  { id: "external-x5", patientName: "Alex Grewal", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: "Anchor", status: "DELIVERY_FAILED", priceAtCreation: 5.25, failedReason: null, createdAt: at("15:20"), isExternal: true, externalDispatchId: "x5", ...anchorStatus("DELIVERY_FAILED", TODAY, "plans/p1/stops/s5") },
   { id: "o4", patientName: "Taylor Dhillon", deliveryAddress: "10153 King George Blvd", deliveryCity: "Surrey", driverName: "Priya Bains", status: "DELIVERED", priceAtCreation: 4.25, failedReason: null, createdAt: at("15:05"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
   { id: "o5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", driverName: null, status: "PENDING", priceAtCreation: 5.25, failedReason: null, createdAt: at("14:40"), isExternal: false, externalDispatchId: null, canCancelExternal: false, ...IN_HOUSE_STATUS },
 ];
@@ -105,34 +107,43 @@ function order(o: Partial<SerializedOrder> & Pick<SerializedOrder, "id" | "patie
 }
 
 // An Anchor row, worded as the page words it.
-function anchorOrder(o: Partial<SerializedOrder> & Pick<SerializedOrder, "id" | "patientName" | "status" | "scheduledDate">): SerializedOrder {
+function anchorOrder(
+  o: Partial<SerializedOrder> & Pick<SerializedOrder, "id" | "patientName" | "status" | "scheduledDate">,
+  spokeStopId: string | null = null
+): SerializedOrder {
   return order({
     assignedDriverId: null,
     assignedDriverName: "Anchor",
     isExternal: true,
     externalProvider: "Spoke",
     externalDispatchId: o.id.replace(/^external-/, ""),
-    ...anchorStatus(o.status, o.scheduledDate.slice(0, 10)),
+    ...anchorStatus(o.status, o.scheduledDate.slice(0, 10), spokeStopId),
     ...o,
   });
 }
 
 export const groupedOrders: Record<string, SerializedOrder[]> = {
-  // Held for tomorrow's 6 AM run: "Waiting to send", and it can be cancelled.
+  // Held for tomorrow's 6 AM run: "WAITING TO SEND", and it can be cancelled.
   [TOMORROW]: [
-    anchorOrder({ id: "external-x3", patientName: "Casey Brar", status: "SCHEDULED", scheduledDate: `${TOMORROW}T00:00:00.000Z`, deliveryAddress: "9045 160 St", canCancelExternal: true }),
+    anchorOrder({ id: "external-x3", patientName: "Casey Brar", status: "SCHEDULED", scheduledDate: `${TOMORROW}T00:00:00.000Z`, deliveryAddress: "9045 160 St" }),
   ],
   [TODAY]: [
     order({ id: "o1", patientName: "Avery Sandhu", status: "ASSIGNED", scheduledDate: `${TODAY}T00:00:00.000Z` }),
-    anchorOrder({ id: "external-x1", patientName: "Jordan Kaur", status: "SUBMITTED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "6620 King George Blvd", canCancelExternal: true }),
-    anchorOrder({ id: "external-x2", patientName: "Sam Gill", status: "DISPATCH_FAILED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "7380 120 St", deliveryCity: "Delta", canCancelExternal: true }),
+    anchorOrder({ id: "external-x1", patientName: "Jordan Kaur", status: "SUBMITTED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "6620 King George Blvd" }, "unassignedStops/u1"),
+    // Held for today's 6 AM run, still here at 11: shown like a failure.
+    anchorOrder({ id: "external-x6", patientName: "Harper Mann", status: "SCHEDULED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "12101 72 Ave" }),
+    // Never reached Anchor: Retry and Cancel side by side.
+    anchorOrder({ id: "external-x2", patientName: "Sam Gill", status: "DISPATCH_FAILED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "7380 120 St", deliveryCity: "Delta" }),
+    anchorOrder({ id: "external-x5", patientName: "Alex Grewal", status: "DELIVERY_FAILED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", deliveryZoneName: "Coquitlam", priceAtCreation: 5.25 }, "plans/p1/stops/s5"),
     order({ id: "o3", patientName: "Morgan Patel", status: "FAILED", scheduledDate: `${TODAY}T00:00:00.000Z`, deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", deliveryZoneName: "White Rock" }),
   ],
   [YESTERDAY]: [
     order({ id: "o6", patientName: "Jamie Thompson", status: "DELIVERED", scheduledDate: `${YESTERDAY}T00:00:00.000Z`, deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", deliveryZoneName: "Langley" }),
     order({ id: "o7", patientName: "Drew Sidhu", status: "DELIVERED", scheduledDate: `${YESTERDAY}T00:00:00.000Z`, assignedDriverId: "d_priya", assignedDriverName: "Priya Bains" }),
     // Anchor took it but never said delivered (the "Not confirmed" filter).
-    anchorOrder({ id: "external-x4", patientName: "Riley Chen", status: "ALLOCATED", scheduledDate: `${YESTERDAY}T00:00:00.000Z`, deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", deliveryZoneName: "Langley" }),
+    anchorOrder({ id: "external-x4", patientName: "Riley Chen", status: "ALLOCATED", scheduledDate: `${YESTERDAY}T00:00:00.000Z`, deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", deliveryZoneName: "Langley" }, "plans/p1/stops/s4"),
+    // Held for yesterday and never sent: overdue.
+    anchorOrder({ id: "external-x7", patientName: "Quinn Ahmed", status: "SCHEDULED", scheduledDate: `${YESTERDAY}T00:00:00.000Z`, deliveryAddress: "8120 128 St" }),
   ],
 };
 export const sortedDateKeys = Object.keys(groupedOrders).sort((a, b) => b.localeCompare(a));
@@ -243,8 +254,9 @@ export const stores = [
 export const notifications = [
   { id: "n6", orderId: null, type: "DELIVERY_FAILED", message: "Anchor could not deliver to Alex Grewal at 3000 Lougheed Hwy, Coquitlam.", isRead: false, createdAt: `${TODAY}T22:10:00.000Z` },
   { id: "n5", orderId: null, type: "SPOKE_CANCEL_INCOMPLETE", message: "The order for Drew Sidhu (9045 160 St, Surrey) was cancelled here while it was being sent, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it.", isRead: false, createdAt: `${TODAY}T21:50:00.000Z` },
+  { id: "n7", orderId: null, type: "SPOKE_CANCEL_INCOMPLETE", message: "Anchor has started handling an order that was cancelled here (Jamie Thompson, 20150 Fraser Hwy, Langley). Contact Anchor so it isn't delivered.", isRead: false, createdAt: `${TODAY}T21:40:00.000Z` },
   { id: "n1", orderId: "o3", type: "DELIVERY_FAILED", message: "Delivery failed for Morgan Patel — No one home — left a card", isRead: false, createdAt: `${TODAY}T21:45:00.000Z` },
-  { id: "n2", orderId: null, type: "SPOKE_DISPATCH_FAILED", message: "Spoke dispatch failed for Sam Gill (7380 120 St, Delta) — today's delivery was NOT sent to Spoke.", isRead: false, createdAt: `${TODAY}T21:30:00.000Z` },
+  { id: "n2", orderId: null, type: "SPOKE_DISPATCH_FAILED", message: "The waiting order for Sam Gill (7380 120 St, Delta) was NOT sent to Anchor: sending it failed. Open Orders and press Retry on it.", isRead: false, createdAt: `${TODAY}T21:30:00.000Z` },
   { id: "n3", orderId: "o2", type: "ORDER_PICKED_UP", message: "Riley Chen's order was picked up by Derek Olsen", isRead: true, createdAt: `${TODAY}T20:20:00.000Z` },
   { id: "n4", orderId: null, type: "GENERATION_INCOMPLETE", message: "Recurring generation stopped at the time limit — 3 profile(s) remaining.", isRead: true, createdAt: `${TODAY}T13:01:00.000Z` },
 ];
