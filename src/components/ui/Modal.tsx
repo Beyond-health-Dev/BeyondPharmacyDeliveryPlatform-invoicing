@@ -6,6 +6,9 @@ import { cn } from "@/lib/portalStyles";
 
 // Open modals, innermost last — Escape and the focus trap act on the top one.
 const openModals: string[] = [];
+// Each open modal's dialog element, so a closing modal can hand focus back to
+// the one under it.
+const modalPanels = new Map<string, HTMLElement>();
 let savedBodyOverflow = "";
 
 const FOCUSABLE =
@@ -70,6 +73,7 @@ export default function Modal({
       document.body.style.overflow = "hidden";
     }
     openModals.push(id);
+    if (panelRef.current) modalPanels.set(id, panelRef.current);
     (initialFocusRef?.current ?? panelRef.current)?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -108,8 +112,16 @@ export default function Modal({
       document.removeEventListener("keydown", onKeyDown);
       const index = openModals.indexOf(id);
       if (index !== -1) openModals.splice(index, 1);
+      modalPanels.delete(id);
       if (openModals.length === 0) document.body.style.overflow = savedBodyOverflow;
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+      // Opened from a modal with nothing focused (a click on its backdrop
+      // moves focus to the page body): go back into that modal, not the page
+      // behind it, so Tab stays trapped there.
+      const below = modalPanels.get(openModals[openModals.length - 1]);
+      const nowhere =
+        !previouslyFocused || previouslyFocused === document.body || !previouslyFocused.isConnected;
+      if (nowhere && below?.isConnected) below.focus();
+      else if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
     // initialFocusRef is read once, when the dialog opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps

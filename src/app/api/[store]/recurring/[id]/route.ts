@@ -9,6 +9,7 @@ import {
   formatRecurringDuplicateMessage,
   parseRecurringActiveDays,
 } from "@/lib/recurringDuplicateGuard";
+import { labelSheetChoice } from "@/lib/recurringLabels";
 
 function normalizeOptionalId(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -63,6 +64,14 @@ export async function PATCH(
       );
     }
     updateData.activeDays = JSON.stringify(nextActiveDays);
+    // A label sheet choice is kept through a change of days, unless it is now
+    // just the sheet the new days give anyway (or unreadable): that goes back
+    // to automatic, so it can't sit there looking automatic and come back as
+    // "moved" when the days change again.
+    if (typeof existing.labelSheets === "string") {
+      const labelSheets = labelSheetChoice(existing.labelSheets, nextActiveDays);
+      updateData.labelSheets = labelSheets ? JSON.stringify(labelSheets) : null;
+    }
   }
 
   if ("recurrenceIntervalWeeks" in body) {

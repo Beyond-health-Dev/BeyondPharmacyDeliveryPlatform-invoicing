@@ -9,7 +9,8 @@
 //   every other week). A multi-day profile never lands on a day sheet.
 // Staff can override that per profile (RecurringOrder.labelSheets): move a
 // person to another sheet, or put them on several. A person on two sheets
-// prints on both. The override never changes the delivery days.
+// prints on both. The override never changes the delivery days; editing the
+// days keeps it, unless it has become just the sheet the new days give.
 // Every sheet fills whole pages of 30 so no stickers are left blank: each
 // person's copies sit together (A, A, A, B, B, B ...).
 
@@ -127,15 +128,25 @@ export function labelSheetsForProfile(
 }
 
 /**
- * Staff have put this profile on sheets other than the automatic one. A
+ * How a profile's sheets differ from the automatic one (its usual sheet):
+ * "moved" when it is no longer on its usual sheet, "extra" when it still is
+ * and is on other sheets too, null when it is just on its usual sheet. A
  * stored choice that has become the automatic sheet (its days were edited to
- * match) doesn't count, and nor does one on a profile that prints nowhere.
+ * match) is null, and so is one on a profile that prints nowhere.
  */
+export function labelSheetChange(
+  profile: Pick<LabelSheetProfile, "activeDays" | "labelSheets">
+): "moved" | "extra" | null {
+  const automatic = labelSheetForDays(profile.activeDays);
+  if (!automatic) return null;
+  const choice = labelSheetChoice(profile.labelSheets, profile.activeDays);
+  if (!choice) return null;
+  return choice.includes(automatic) ? "extra" : "moved";
+}
+
+/** Staff have put this profile on sheets other than the automatic one (moved or extra). */
 export function isLabelSheetMoved(profile: Pick<LabelSheetProfile, "activeDays" | "labelSheets">) {
-  return (
-    labelSheetForDays(profile.activeDays) !== null &&
-    labelSheetChoice(profile.labelSheets, profile.activeDays) !== null
-  );
+  return labelSheetChange(profile) !== null;
 }
 
 const collator = new Intl.Collator("en-CA", { sensitivity: "base", numeric: true });
@@ -207,6 +218,32 @@ export function draftLabelSheets(draft: LabelSheetDraft, profile: DraftProfile) 
 /** Not on the automatic sheet, as saved or in the draft. */
 export function isDraftLabelSheetMoved(draft: LabelSheetDraft, profile: DraftProfile) {
   return isLabelSheetMoved(draftProfile(draft, profile));
+}
+
+/** The row's tag: "moved", "extra" (sheet) or none, as saved or in the draft. */
+export function draftLabelSheetChange(draft: LabelSheetDraft, profile: DraftProfile) {
+  return labelSheetChange(draftProfile(draft, profile));
+}
+
+/**
+ * The panel's search: the name, address or city, or the title of a sheet the
+ * person is on as saved or in the draft ("monday", "daily"), so a row being
+ * changed never drops out of the list.
+ */
+export function matchesLabelSearch(
+  draft: LabelSheetDraft,
+  profile: DraftProfile & Pick<LabelSheetProfile, "patientName" | "deliveryAddress" | "deliveryCity">,
+  query: string
+) {
+  const search = query.trim().toLowerCase();
+  if (!search) return true;
+  const sheets = new Set([...labelSheetsForProfile(profile), ...draftLabelSheets(draft, profile)]);
+  return [
+    profile.patientName,
+    profile.deliveryAddress,
+    profile.deliveryCity ?? "",
+    ...[...sheets].map(labelSheetTitle),
+  ].some((text) => text.toLowerCase().includes(search));
 }
 
 /** The row has a change waiting to be saved. */

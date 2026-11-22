@@ -231,6 +231,64 @@ describe("PUT /api/[store]/recurring/labels/assignments", () => {
     expect(await res.json()).toEqual({ updated: 0, missing: 1 });
   });
 
+  it("doesn't write a profile deactivated between the read and the write", async () => {
+    // The database as it is by the time of the write: r_mon was just deactivated.
+    const now = profiles.map((p) => ({ ...p, isActive: p.id !== "r_mon" }));
+    mocks.updateMany.mockImplementation(async ({ where }) => ({
+      count: now.filter(
+        (row) =>
+          row.storeId === where.storeId &&
+          where.id.in.includes(row.id) &&
+          (where.isActive === undefined || row.isActive === where.isActive)
+      ).length,
+    }));
+    const res = await put({
+      assignments: [
+        { id: "r_mon", sheets: ["friday"] },
+        { id: "r_old", sheets: ["friday"] },
+      ],
+    });
+    expect(await res.json()).toEqual({ updated: 1, missing: 1 });
+    for (const [args] of mocks.updateMany.mock.calls) expect(args.where.isActive).toBe(true);
+  });
+
+  it("skips and counts a profile with no readable delivery days", async () => {
+    mocks.findMany.mockResolvedValue([
+      record("r_mon", "Avery Sandhu", "[1]"),
+      record("r_bad", "Sam Gill", "not json"),
+      record("r_none", "Drew Sidhu", "[]"),
+    ]);
+    const res = await put({
+      assignments: [
+        { id: "r_mon", sheets: ["friday"] },
+        { id: "r_bad", sheets: ["friday"] },
+        { id: "r_none", sheets: null },
+      ],
+    });
+    expect(await res.json()).toEqual({ updated: 1, missing: 2 });
+    expect(writes()).toEqual([{ ids: ["r_mon"], labelSheets: '["friday"]' }]);
+  });
+
+  it("answers a plain 500 and saves nothing when the database write fails", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.transaction.mockRejectedValueOnce(new Error("deadlock detected on relation RecurringOrder"));
+    const res = await put({
+      assignments: [
+        { id: "r_mon", sheets: ["friday"] },
+        { id: "r_daily", sheets: null },
+      ],
+    });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: expect.stringContaining("Couldn't save the label changes") });
+    expect(JSON.stringify(body)).not.toMatch(/deadlock|RecurringOrder/);
+    // Every write went into that one transaction, so none of them happened.
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction.mock.calls[0][0]).toHaveLength(mocks.updateMany.mock.calls.length);
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
   it("scopes every write to the store and never touches delivery days", async () => {
     await put({
       assignments: [

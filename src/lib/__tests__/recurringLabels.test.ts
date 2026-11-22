@@ -4,6 +4,7 @@ import {
   LABEL_SHEETS,
   allocateLabelSlots,
   countLabelSheetPeople,
+  draftLabelSheetChange,
   draftLabelSheets,
   fitLabelLine,
   formatLabelLines,
@@ -15,6 +16,7 @@ import {
   labelCopyCounts,
   labelPageCount,
   labelSheetAssignments,
+  labelSheetChange,
   labelSheetChoice,
   labelSheetFileName,
   labelSheetForDays,
@@ -23,6 +25,7 @@ import {
   labelSheetTitle,
   labelSlotRect,
   layoutLabelSheet,
+  matchesLabelSearch,
   parseLabelSheet,
   parseLabelSheets,
   profilesForLabelSheet,
@@ -234,6 +237,30 @@ describe("sheets chosen by staff", () => {
     expect(isLabelSheetMoved(p)).toBe(false);
   });
 
+  it("tells a person moved off their usual sheet from one given an extra sheet", () => {
+    const cases: Array<[unknown, unknown, ReturnType<typeof labelSheetChange>]> = [
+      // Off the usual sheet: moved, whether to one sheet or several.
+      [[5], '["monday"]', "moved"],
+      [[5], ["monday", "tuesday"], "moved"],
+      [[1, 3], ["wednesday"], "moved"],
+      // Still on the usual sheet, plus others: an extra sheet.
+      [[5], ["monday", "friday"], "extra"],
+      [[1, 3], '["daily","saturday"]', "extra"],
+      // Just the usual sheet, nothing stored, unreadable, or no valid days.
+      [[5], ["friday"], null],
+      [[1, 3], ["daily"], null],
+      [[5], null, null],
+      [[5], "oops", null],
+      ["bad", ["monday"], null],
+    ];
+    for (const [activeDays, labelSheets, change] of cases) {
+      const p = profile("p1", "Avery Sandhu", activeDays, { labelSheets });
+      expect(labelSheetChange(p)).toBe(change);
+      // Moved and extra both differ from automatic.
+      expect(isLabelSheetMoved(p)).toBe(change !== null);
+    }
+  });
+
   it("keeps the sheet's print order, whoever was moved onto it", () => {
     const list = [
       profile("p1", "Riley Chen", [2]),
@@ -353,12 +380,83 @@ describe("rearranging (the panel's draft)", () => {
     ]);
   });
 
+  it("sends nothing when a moved person is moved away and back", () => {
+    // Saved on Monday (their days give Friday): over to Tuesday, then back.
+    let draft = toggleDraftLabelSheet(empty, moved, "tuesday")!;
+    draft = toggleDraftLabelSheet(draft, moved, "monday")!;
+    expect(draftLabelSheets(draft, moved)).toEqual(["tuesday"]);
+    expect(draft.size).toBe(1);
+    draft = toggleDraftLabelSheet(draft, moved, "monday")!;
+    draft = toggleDraftLabelSheet(draft, moved, "tuesday")!;
+    expect(draftLabelSheets(draft, moved)).toEqual(["monday"]);
+    expect(draft.size).toBe(0);
+    expect(isLabelSheetChanged(draft, "m")).toBe(false);
+    expect(labelSheetAssignments(draft)).toEqual([]);
+  });
+
+  it("tags a row Moved or Extra sheet, as saved and in the draft", () => {
+    // Adding a sheet keeps the usual one: an extra sheet, not a move.
+    const added = toggleDraftLabelSheet(empty, weekly, "thursday")!;
+    expect(draftLabelSheetChange(empty, weekly)).toBeNull();
+    expect(draftLabelSheetChange(added, weekly)).toBe("extra");
+    // Dropping the usual sheet makes it a move.
+    const off = toggleDraftLabelSheet(added, weekly, "monday")!;
+    expect(draftLabelSheetChange(off, weekly)).toBe("moved");
+
+    expect(draftLabelSheetChange(empty, moved)).toBe("moved");
+    const withFriday = toggleDraftLabelSheet(empty, moved, "friday")!;
+    expect(draftLabelSheetChange(withFriday, moved)).toBe("extra");
+    expect(draftLabelSheetChange(resetDraftLabelSheets(empty, moved), moved)).toBeNull();
+  });
+
   it("compares with the saved choice as it would be stored", () => {
     // Stored Tuesday on a Tuesday person: the same as automatic.
     const pinned = profile("p", "Drew Sidhu", [2], { labelSheets: ["tuesday"] });
     expect(resetDraftLabelSheets(empty, pinned).size).toBe(0);
     const both = toggleDraftLabelSheet(empty, pinned, "wednesday")!;
     expect(toggleDraftLabelSheet(both, pinned, "wednesday")!.size).toBe(0);
+  });
+});
+
+describe("searching the panel", () => {
+  const empty: LabelSheetDraft = new Map();
+  const people = [
+    profile("w", "Sam Gill", [1], { deliveryAddress: "5501 204 St", deliveryCity: "Langley" }),
+    profile("d", "Riley Chen", [1, 3, 5]),
+    profile("m", "Jamie Thompson", [5], { labelSheets: ["monday"] }),
+    profile("x", "Casey Brar", [2], { labelSheets: ["daily", "tuesday"] }),
+  ];
+  const find = (query: string, draft: LabelSheetDraft = empty) =>
+    people.filter((p) => matchesLabelSearch(draft, p, query)).map((p) => p.id);
+
+  it("matches everyone on an empty search", () => {
+    expect(find("")).toEqual(["w", "d", "m", "x"]);
+    expect(find("   ")).toEqual(["w", "d", "m", "x"]);
+  });
+
+  it("matches name, address and city, ignoring case and spaces around", () => {
+    expect(find("riley")).toEqual(["d"]);
+    expect(find(" 204 st ")).toEqual(["w"]);
+    expect(find("LANGLEY")).toEqual(["w"]);
+    expect(find("surrey")).toEqual(["d", "m", "x"]);
+    expect(find("nobody")).toEqual([]);
+  });
+
+  it("matches the sheets a person is on", () => {
+    expect(find("monday")).toEqual(["w", "m"]);
+    expect(find("Mon")).toEqual(["w", "m"]);
+    expect(find("daily")).toEqual(["d", "x"]);
+    expect(find("tuesday")).toEqual(["x"]);
+    // Their delivery day alone doesn't count once they are moved off it.
+    expect(find("friday")).toEqual([]);
+  });
+
+  it("keeps a row being changed in the list, and finds where it is going", () => {
+    const sam = people[0];
+    const moving = toggleDraftLabelSheet(toggleDraftLabelSheet(empty, sam, "saturday")!, sam, "monday")!;
+    expect(draftLabelSheets(moving, sam)).toEqual(["saturday"]);
+    expect(find("monday", moving)).toEqual(["w", "m"]);
+    expect(find("saturday", moving)).toEqual(["w"]);
   });
 });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useId, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import Modal from "@/components/ui/Modal";
 import { useConfirm } from "@/components/ui/DialogsProvider";
 import {
@@ -20,8 +20,8 @@ import {
   WEEKDAY_SHEETS,
   compareLabelProfiles,
   countLabelSheetPeople,
+  draftLabelSheetChange,
   draftLabelSheets,
-  isDraftLabelSheetMoved,
   isLabelSheetChanged,
   isLabelSheetMoved,
   labelPageCount,
@@ -30,6 +30,7 @@ import {
   labelSheetForDays,
   labelSheetShortTitle,
   labelSheetTitle,
+  matchesLabelSearch,
   resetDraftLabelSheets,
   toggleDraftLabelSheet,
   type LabelSheet,
@@ -73,7 +74,8 @@ export default function RecurringLabelSheets({
   const titleId = useId();
   const dayGroupId = useId();
   const counts = useMemo(() => countLabelSheetPeople(orders), [orders]);
-  const movedCount = useMemo(
+  // Moved or given an extra sheet: either way not just on their usual sheet.
+  const rearrangedCount = useMemo(
     () => orders.filter((order) => order.isActive !== false && isLabelSheetMoved(order)).length,
     [orders]
   );
@@ -81,6 +83,9 @@ export default function RecurringLabelSheets({
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [rearranging, setRearranging] = useState(defaultRearrangeOpen);
+  // After a save, until the page has the saved sheets: reopening the panel
+  // before then would show the old ones.
+  const [refreshing, startRefresh] = useTransition();
   // The panel is a dialog drawn into the page body, which the server HTML
   // never has: opened on load, it waits until the page has hydrated.
   const hydrated = useHydrated();
@@ -121,6 +126,7 @@ export default function RecurringLabelSheets({
   };
 
   const openRearrange = () => {
+    if (refreshing) return;
     setError("");
     setStatus("");
     setRearranging(true);
@@ -128,17 +134,18 @@ export default function RecurringLabelSheets({
 
   const finishRearrange = ({ updated, missing }: SaveResult) => {
     setRearranging(false);
-    router.refresh();
-    const people = `${updated} ${updated === 1 ? "person" : "people"}`;
+    startRefresh(() => router.refresh());
     if (missing > 0) {
-      // Removed, deactivated or merged since the page loaded.
+      // Removed, deactivated, merged or left with no delivery days since the
+      // panel opened. The refresh shows them as they are now.
+      const notChanged = `${peopleCount(missing)} could not be changed because they were removed or changed since the panel was opened. The page has been refreshed.`;
       setError(
         updated > 0
-          ? `Saved label changes for ${people}, but some people could not be updated. Reload the page and try again.`
-          : "Some people could not be updated, so nothing was saved. Reload the page and try again."
+          ? `Saved label changes for ${peopleCount(updated)}. ${notChanged}`
+          : `No label changes were saved. ${notChanged}`
       );
     } else {
-      setStatus(`Saved label changes for ${people}.`);
+      setStatus(`Saved label changes for ${peopleCount(updated)}.`);
     }
   };
 
@@ -179,11 +186,19 @@ export default function RecurringLabelSheets({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-3">
-          <button type="button" onClick={openRearrange} className={button("secondary", "sm")}>
+          {/* aria-disabled, not disabled, so focus stays here after the panel closes. */}
+          <button
+            type="button"
+            onClick={openRearrange}
+            aria-disabled={refreshing || undefined}
+            className={cn(button("secondary", "sm"), ARIA_DISABLED)}
+          >
             Rearrange labels
           </button>
-          {movedCount > 0 && (
-            <span className="text-xs text-muted tabular-nums">{movedCount} moved</span>
+          {rearrangedCount > 0 && (
+            <span className="text-xs text-muted tabular-nums">
+              {peopleCount(rearrangedCount)} not on their usual sheet
+            </span>
           )}
         </div>
       </div>
@@ -201,12 +216,12 @@ export default function RecurringLabelSheets({
         <div className="flex flex-wrap items-center gap-3">
           {sheetButton("daily", "primary")}
           <span className="text-xs text-muted">
-            Profiles on two or more days a week, plus anyone moved here
+            People delivered two or more days a week, unless moved, plus anyone moved here
           </span>
         </div>
         <div>
           <p id={dayGroupId} className="mb-2 text-xs font-semibold text-muted">
-            One day a week
+            Day sheets: one day a week, plus anyone moved here
           </p>
           <div role="group" aria-labelledby={dayGroupId} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {WEEKDAY_SHEETS.map((sheet) => sheetButton(sheet, "secondary", "w-full"))}
@@ -230,6 +245,13 @@ interface SaveResult {
   missing: number;
 }
 
+// Dims a control that is aria-disabled rather than disabled (it keeps focus).
+const ARIA_DISABLED = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+
+function peopleCount(n: number) {
+  return `${n} ${n === 1 ? "person" : "people"}`;
+}
+
 // Mounted only while open, so every opening starts with a clean draft.
 function RearrangeLabelsPanel({
   storeSlug,
@@ -247,6 +269,9 @@ function RearrangeLabelsPanel({
   const titleId = useId();
   const introId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
+  // Mounted when the panel opens. On a touch screen, focusing the search box
+  // would open the keyboard over the list, so the panel itself takes focus.
+  const [focusSearch] = useState(() => window.matchMedia("(pointer: fine)").matches);
   const [draft, setDraft] = useState<LabelSheetDraft>(() => new Map());
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
@@ -264,16 +289,14 @@ function RearrangeLabelsPanel({
         .sort(compareLabelProfiles),
     [orders]
   );
-  const trimmedQuery = query.trim().toLowerCase();
-  const shown = trimmedQuery
-    ? people.filter(
-        (person) =>
-          person.patientName.toLowerCase().includes(trimmedQuery) ||
-          person.deliveryAddress.toLowerCase().includes(trimmedQuery) ||
-          person.deliveryCity.toLowerCase().includes(trimmedQuery)
-      )
-    : people;
+  const shown = people.filter((person) => matchesLabelSearch(draft, person, query));
   const changes = draft.size;
+  // Read out as the search narrows the list.
+  const searchResult = !query.trim()
+    ? ""
+    : shown.length === 0
+      ? `No one matches “${query.trim()}”.`
+      : `${peopleCount(shown.length)} found.`;
 
   const pillId = (person: LabelSheetOrder, sheet: LabelSheet) => `${idBase}-${person.id}-${sheet}`;
 
@@ -294,6 +317,7 @@ function RearrangeLabelsPanel({
   };
 
   const toggleOpen = (id: string) => {
+    if (saving) return;
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -337,12 +361,22 @@ function RearrangeLabelsPanel({
       const body = await res.json().catch(() => null);
       // Only the route's own reply counts: an expired session is redirected
       // to the sign-in page, which comes back as a normal page.
-      if (res.status === 401 || (res.ok && typeof body?.updated !== "number")) {
+      if (res.status === 401 || (res.ok && body === null)) {
         setError("Your session may have expired. Reload the page and sign in again. Nothing was saved.");
         return;
       }
+      // A request the route refused, or a reply that isn't the counts: the
+      // route's reasons are technical, and a reload gives the panel fresh data.
+      if (res.status < 500 && (!res.ok || typeof body?.updated !== "number")) {
+        setError("Couldn't save the label changes. Reload the page and try again.");
+        return;
+      }
       if (!res.ok) {
-        setError(body?.error || "Couldn't save the label changes. Please try again.");
+        setError(
+          typeof body?.error === "string" && body.error
+            ? body.error
+            : "Couldn't save the label changes. Please try again."
+        );
         return;
       }
       onSaved({ updated: body.updated, missing: typeof body.missing === "number" ? body.missing : 0 });
@@ -361,7 +395,7 @@ function RearrangeLabelsPanel({
       size="lg"
       labelledBy={titleId}
       describedBy={introId}
-      initialFocusRef={searchRef}
+      initialFocusRef={focusSearch ? searchRef : undefined}
     >
       <div className="shrink-0 border-b border-hairline px-6 pb-4 pt-2 sm:pt-6">
         <h3 id={titleId} className={sectionTitle}>
@@ -369,6 +403,8 @@ function RearrangeLabelsPanel({
         </h3>
         <p id={introId} className={cn(mutedText, "mt-1")}>
           This only changes which label sheet a person prints on, not their delivery days.
+          Everyone starts on Daily Deliveries if they are delivered two or more days a week,
+          otherwise on the sheet for their one day.
         </p>
         <input
           ref={searchRef}
@@ -383,10 +419,13 @@ function RearrangeLabelsPanel({
               setQuery("");
             }
           }}
-          placeholder="Search by name or address…"
-          aria-label="Search by name or address"
+          placeholder="Search by name, address, city or sheet…"
+          aria-label="Search by name, address, city or sheet"
           className={cn(input, "mt-3")}
         />
+        <p aria-live="polite" className="sr-only">
+          {searchResult}
+        </p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -407,8 +446,9 @@ function RearrangeLabelsPanel({
                 areaId={`${idBase}-${person.id}`}
                 pillId={(sheet) => pillId(person, sheet)}
                 sheets={draftLabelSheets(draft, person)}
-                moved={isDraftLabelSheetMoved(draft, person)}
+                change={draftLabelSheetChange(draft, person)}
                 changed={isLabelSheetChanged(draft, person.id)}
+                busy={saving}
                 expanded={expanded.has(person.id)}
                 showHint={hintFor === person.id}
                 onToggleOpen={() => toggleOpen(person.id)}
@@ -451,8 +491,9 @@ function RearrangeRow({
   areaId,
   pillId,
   sheets,
-  moved,
+  change,
   changed,
+  busy,
   expanded,
   showHint,
   onToggleOpen,
@@ -463,8 +504,11 @@ function RearrangeRow({
   areaId: string;
   pillId: (sheet: LabelSheet) => string;
   sheets: LabelSheet[];
-  moved: boolean;
+  // Moved off their usual sheet, or given an extra one.
+  change: "moved" | "extra" | null;
   changed: boolean;
+  // A save is in flight: the controls look inactive (clicks are ignored).
+  busy: boolean;
   expanded: boolean;
   showHint: boolean;
   onToggleOpen: () => void;
@@ -472,12 +516,17 @@ function RearrangeRow({
   onReset: () => void;
 }) {
   const days = person.activeDays.map((day) => labelSheetShortTitle(WEEKDAY_SHEETS[day])).join(", ");
+  const usual = labelSheetForDays(person.activeDays);
+  const nameId = `${areaId}-name`;
+  const pillsLabelId = `${areaId}-pills`;
 
   return (
     <li className="px-6 py-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold text-navy">{person.patientName}</p>
+        <div className="min-w-0 break-words">
+          <p id={nameId} className="font-semibold text-navy">
+            {person.patientName}
+          </p>
           <p className="text-sm text-muted">
             {person.deliveryAddress}, {person.deliveryCity}
           </p>
@@ -489,7 +538,8 @@ function RearrangeRow({
                 {labelSheetTitle(sheet)}
               </span>
             ))}
-            {moved && <span className={toneBadgeClasses("blue")}>Moved</span>}
+            {change === "moved" && <span className={toneBadgeClasses("blue")}>Moved</span>}
+            {change === "extra" && <span className={toneBadgeClasses("blue")}>Extra sheet</span>}
             {changed && <span className={toneBadgeClasses("butter")}>Not saved</span>}
           </p>
         </div>
@@ -498,17 +548,21 @@ function RearrangeRow({
           onClick={onToggleOpen}
           aria-expanded={expanded}
           aria-controls={areaId}
+          aria-disabled={busy || undefined}
           aria-label={`Change label sheets for ${person.patientName}`}
-          className={cn(button("secondary", "sm"), "shrink-0")}
+          className={cn(button("secondary", "sm"), ARIA_DISABLED, "shrink-0")}
         >
           Change
         </button>
       </div>
       {expanded && (
         <div id={areaId} className="mt-3">
+          <p id={pillsLabelId} className="mb-2 text-xs font-semibold text-muted">
+            Print this person&apos;s labels on (tap to add or remove):
+          </p>
           <div
             role="group"
-            aria-label={`Label sheets for ${person.patientName}`}
+            aria-labelledby={`${nameId} ${pillsLabelId}`}
             className="grid grid-cols-4 gap-1.5"
           >
             {LABEL_SHEETS.map((sheet) => (
@@ -518,8 +572,12 @@ function RearrangeRow({
                 type="button"
                 onClick={() => onToggleSheet(sheet)}
                 aria-pressed={sheets.includes(sheet)}
+                aria-disabled={busy || undefined}
                 aria-label={labelSheetTitle(sheet)}
-                className="selectable inline-flex min-w-0 items-center justify-center gap-1.5 rounded-full px-2 py-2 text-xs font-semibold active:scale-(--press-scale)"
+                className={cn(
+                  "selectable inline-flex min-w-0 items-center justify-center gap-1.5 rounded-full px-2 py-2 text-xs font-semibold active:scale-(--press-scale)",
+                  ARIA_DISABLED
+                )}
               >
                 <span className="select-dot" aria-hidden="true" />
                 {labelSheetShortTitle(sheet)}
@@ -530,14 +588,16 @@ function RearrangeRow({
             <p aria-live="polite" className="text-xs font-semibold text-navy">
               {showHint ? "Keep at least one sheet" : ""}
             </p>
-            {moved && (
+            {change && usual && (
+              // The padding widens the tap area; the margin keeps the layout.
               <button
                 type="button"
                 onClick={onReset}
-                aria-label={`Reset labels for ${person.patientName}`}
-                className={cn(linkButton, "text-xs")}
+                aria-disabled={busy || undefined}
+                aria-label={`Use delivery days (${labelSheetShortTitle(usual)}) for ${person.patientName}`}
+                className={cn(linkButton, "-m-2 p-2 text-xs")}
               >
-                Reset
+                Use delivery days ({labelSheetShortTitle(usual)})
               </button>
             )}
           </div>

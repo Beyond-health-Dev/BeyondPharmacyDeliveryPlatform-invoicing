@@ -55,7 +55,7 @@ function readAssignments(body: unknown): { assignments: LabelSheetAssignment[] }
  * sheet its delivery days give). Only the label choice is written; delivery
  * days never change. Replies { updated, missing }: missing counts profiles
  * that aren't this store's active ones (removed, deactivated, or hidden as a
- * duplicate since the page loaded).
+ * duplicate since the page loaded) or have no readable delivery days.
  */
 export async function PUT(
   req: NextRequest,
@@ -89,7 +89,8 @@ export async function PUT(
   const idsByValue = new Map<string | null, string[]>();
   for (const { id, sheets } of request.assignments) {
     const activeDays = visibleDays.get(id);
-    if (!activeDays) continue;
+    // Not shown on the page, or no readable delivery days (so on no sheet).
+    if (!activeDays?.length) continue;
     // Just the sheet the days give anyway: store automatic.
     const choice = labelSheetChoice(sheets, activeDays);
     const value = choice ? JSON.stringify(choice) : null;
@@ -98,15 +99,25 @@ export async function PUT(
 
   let updated = 0;
   if (idsByValue.size > 0) {
-    const results = await prisma.$transaction(
-      [...idsByValue].map(([labelSheets, ids]) =>
-        prisma.recurringOrder.updateMany({
-          where: { storeId: store.id, id: { in: ids } },
-          data: { labelSheets },
-        })
-      )
-    );
-    updated = results.reduce((sum, result) => sum + result.count, 0);
+    try {
+      const results = await prisma.$transaction(
+        [...idsByValue].map(([labelSheets, ids]) =>
+          prisma.recurringOrder.updateMany({
+            // Still active: one deactivated since the read counts as missing.
+            where: { storeId: store.id, id: { in: ids }, isActive: true },
+            data: { labelSheets },
+          })
+        )
+      );
+      updated = results.reduce((sum, result) => sum + result.count, 0);
+    } catch (err) {
+      // All or nothing: the transaction has written none of the changes.
+      console.error("[Recurring labels] Saving label sheets failed:", err);
+      return NextResponse.json(
+        { error: "Couldn't save the label changes. Nothing was changed. Please try again." },
+        { status: 500 }
+      );
+    }
   }
 
   return NextResponse.json({ updated, missing: request.assignments.length - updated });
