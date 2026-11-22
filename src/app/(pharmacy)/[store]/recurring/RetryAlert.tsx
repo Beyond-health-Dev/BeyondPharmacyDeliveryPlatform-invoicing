@@ -36,7 +36,13 @@ export default function RetryAlert({
     if (!retrying) setAttempt(attempt + 1);
   }
 
+  // This alert's own Retry is in flight. A retry that ends while the alert is
+  // still up has failed, so forget the press: only an alert whose own retry
+  // just succeeded may move focus when it goes away.
   const pressed = useRef(false);
+  useEffect(() => {
+    if (!retrying) pressed.current = false;
+  }, [retrying]);
   const restore = useRef(restoreFocusTo);
   useEffect(() => {
     restore.current = restoreFocusTo;
