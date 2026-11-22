@@ -4,20 +4,36 @@ import {
   LABEL_SHEETS,
   allocateLabelSlots,
   countLabelSheetPeople,
+  draftLabelSheetChange,
+  draftLabelSheets,
   fitLabelLine,
   formatLabelLines,
   formatPostalCode,
+  isDraftLabelSheetMoved,
+  isLabelSheetChanged,
+  isLabelSheetMoved,
   labelBaselines,
   labelCopyCounts,
   labelPageCount,
+  labelSheetAssignments,
+  labelSheetChange,
+  labelSheetChoice,
   labelSheetFileName,
   labelSheetForDays,
+  labelSheetShortTitle,
+  labelSheetsForProfile,
   labelSheetTitle,
   labelSlotRect,
   layoutLabelSheet,
+  matchesLabelSearch,
   parseLabelSheet,
+  parseLabelSheets,
   profilesForLabelSheet,
+  resetDraftLabelSheets,
+  setDraftLabelSheets,
   toWinAnsi,
+  toggleDraftLabelSheet,
+  type LabelSheetDraft,
   type LabelSheetProfile,
   type MeasureLabelText,
 } from "@/lib/recurringLabels";
@@ -124,6 +140,333 @@ describe("profilesForLabelSheet", () => {
     for (const sheet of LABEL_SHEETS) {
       expect(counts[sheet]).toBe(profilesForLabelSheet(list, sheet).length);
     }
+  });
+});
+
+describe("sheets chosen by staff", () => {
+  it("reads a stored or sent choice in sheet order, without repeats", () => {
+    expect(parseLabelSheets('["thursday","monday"]')).toEqual(["monday", "thursday"]);
+    expect(parseLabelSheets(["saturday", "daily", "saturday", "sunday"])).toEqual(["daily", "sunday", "saturday"]);
+    expect(parseLabelSheets(["friday"])).toEqual(["friday"]);
+  });
+
+  it("treats empty, unreadable or unknown values as automatic (null)", () => {
+    for (const value of [
+      null,
+      undefined,
+      "",
+      "[]",
+      [],
+      "not json",
+      '["monday"',
+      '"monday"',
+      "monday",
+      '{"0":"monday"}',
+      { sheets: ["monday"] },
+      42,
+      // One unknown entry spoils the lot: names must match exactly.
+      ["monday", "funday"],
+      '["monday","Monday"]',
+      [" monday"],
+      ["monday", 1],
+      ["monday", null],
+    ]) {
+      expect(parseLabelSheets(value)).toBeNull();
+    }
+  });
+
+  it("stores nothing when the choice is just the sheet the days give", () => {
+    expect(labelSheetChoice(["monday"], [1])).toBeNull();
+    expect(labelSheetChoice(["daily"], "[1,3,5]")).toBeNull();
+    expect(labelSheetChoice(["monday"], [1, 3, 5])).toEqual(["monday"]);
+    expect(labelSheetChoice(["monday", "daily"], [1, 3])).toEqual(["daily", "monday"]);
+    expect(labelSheetChoice(null, [1])).toBeNull();
+  });
+
+  it("gives short pill names and full titles", () => {
+    expect(LABEL_SHEETS.map(labelSheetShortTitle)).toEqual(["Daily", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+    expect(labelSheetTitle("thursday")).toBe("Thursday");
+  });
+
+  it("moves a person off their automatic sheet and onto the chosen one", () => {
+    const list = [
+      profile("p1", "Avery Sandhu", [1], { labelSheets: '["friday"]' }),
+      profile("p2", "Jordan Kaur", [1]),
+    ];
+    expect(labelSheetsForProfile(list[0])).toEqual(["friday"]);
+    expect(isLabelSheetMoved(list[0])).toBe(true);
+    expect(isLabelSheetMoved(list[1])).toBe(false);
+    expect(profilesForLabelSheet(list, "monday").map((p) => p.id)).toEqual(["p2"]);
+    expect(profilesForLabelSheet(list, "friday").map((p) => p.id)).toEqual(["p1"]);
+    expect(countLabelSheetPeople(list)).toMatchObject({ monday: 1, friday: 1, daily: 0 });
+  });
+
+  it("puts one person on several sheets, each printing their own copies", () => {
+    const list = [
+      profile("p1", "Avery Sandhu", [2, 4], { labelSheets: ["tuesday", "thursday"] }),
+      profile("p2", "Jordan Kaur", [2]),
+    ];
+    expect(profilesForLabelSheet(list, "daily")).toEqual([]);
+    expect(profilesForLabelSheet(list, "tuesday").map((p) => p.id)).toEqual(["p1", "p2"]);
+    expect(profilesForLabelSheet(list, "thursday").map((p) => p.id)).toEqual(["p1"]);
+    // Copies are worked out per sheet: 15 each on Tuesday, all 30 on Thursday.
+    expect(labelCopyCounts(profilesForLabelSheet(list, "tuesday").length)).toEqual(Array(2).fill(15));
+    expect(labelCopyCounts(profilesForLabelSheet(list, "thursday").length)).toEqual([30]);
+  });
+
+  it("falls back to the automatic sheet when the stored value is unreadable", () => {
+    for (const labelSheets of ["not json", "[]", '["funday"]', null, undefined]) {
+      const p = profile("p1", "Avery Sandhu", [1], { labelSheets });
+      expect(labelSheetsForProfile(p)).toEqual(["monday"]);
+      expect(isLabelSheetMoved(p)).toBe(false);
+    }
+  });
+
+  it("puts a profile with no valid delivery days on no sheet, whatever is stored", () => {
+    const p = profile("p1", "Avery Sandhu", "bad", { labelSheets: '["monday"]' });
+    expect(labelSheetsForProfile(p)).toEqual([]);
+    expect(isLabelSheetMoved(p)).toBe(false);
+    expect(LABEL_SHEETS.every((sheet) => profilesForLabelSheet([p], sheet).length === 0)).toBe(true);
+    expect(Object.values(countLabelSheetPeople([p])).every((n) => n === 0)).toBe(true);
+  });
+
+  it("doesn't count a stored choice that has become the automatic sheet as moved", () => {
+    // Moved to Tuesday, then the delivery day was edited to Tuesday too.
+    const p = profile("p1", "Avery Sandhu", [2], { labelSheets: '["tuesday"]' });
+    expect(labelSheetsForProfile(p)).toEqual(["tuesday"]);
+    expect(isLabelSheetMoved(p)).toBe(false);
+  });
+
+  it("tells a person moved off their usual sheet from one given an extra sheet", () => {
+    const cases: Array<[unknown, unknown, ReturnType<typeof labelSheetChange>]> = [
+      // Off the usual sheet: moved, whether to one sheet or several.
+      [[5], '["monday"]', "moved"],
+      [[5], ["monday", "tuesday"], "moved"],
+      [[1, 3], ["wednesday"], "moved"],
+      // Still on the usual sheet, plus others: an extra sheet.
+      [[5], ["monday", "friday"], "extra"],
+      [[1, 3], '["daily","saturday"]', "extra"],
+      // Just the usual sheet, nothing stored, unreadable, or no valid days.
+      [[5], ["friday"], null],
+      [[1, 3], ["daily"], null],
+      [[5], null, null],
+      [[5], "oops", null],
+      ["bad", ["monday"], null],
+    ];
+    for (const [activeDays, labelSheets, change] of cases) {
+      const p = profile("p1", "Avery Sandhu", activeDays, { labelSheets });
+      expect(labelSheetChange(p)).toBe(change);
+      // Moved and extra both differ from automatic.
+      expect(isLabelSheetMoved(p)).toBe(change !== null);
+    }
+  });
+
+  it("keeps the sheet's print order, whoever was moved onto it", () => {
+    const list = [
+      profile("p1", "Riley Chen", [2]),
+      profile("p2", "avery sandhu", [5], { labelSheets: ["tuesday"] }),
+      profile("p3", "Casey Brar", [1, 3], { labelSheets: ["daily", "tuesday"] }),
+      profile("p4", "Avery Sandhu", [2], { deliveryAddress: "100 Main St" }),
+    ];
+    const order = profilesForLabelSheet(list, "tuesday").map((p) => p.id);
+    expect(order).toEqual(["p4", "p2", "p3", "p1"]);
+    expect(profilesForLabelSheet([...list].reverse(), "tuesday").map((p) => p.id)).toEqual(order);
+  });
+
+  it("counts the same people the sheets print, with moved people mixed in", () => {
+    // The Surrey-shaped list from above, then staff rearrangements on top.
+    const list: LabelSheetProfile[] = [];
+    for (let i = 0; i < 23; i++) list.push(profile(`m${i}`, `Daily ${i}`, i % 2 ? [1, 3, 5] : [0, 2, 4, 6]));
+    const perDay: Record<number, number> = { 1: 11, 2: 15, 3: 10, 4: 13, 5: 16 };
+    for (const [day, n] of Object.entries(perDay)) {
+      for (let i = 0; i < n; i++) list.push(profile(`d${day}-${i}`, `Weekly ${day} ${i}`, [Number(day)]));
+    }
+    list.push(profile("gone", "Inactive Person", [1], { isActive: false, labelSheets: '["saturday"]' }));
+    list.push(profile("x1", "Moved Daily", [1, 3], { labelSheets: '["wednesday"]' }));
+    list.push(profile("x2", "Two Sheets", [4], { labelSheets: ["daily", "thursday"] }));
+    list.push(profile("x3", "Three Sheets", [0, 6], { labelSheets: '["sunday","saturday","daily"]' }));
+    list.push(profile("x4", "Bad Value", [5], { labelSheets: "oops" }));
+    list.push(profile("x5", "Bad Days", "[]", { labelSheets: '["monday"]' }));
+    list.push(profile("x6", "Weekly Moved", [2], { labelSheets: ["sunday"] }));
+
+    const counts = countLabelSheetPeople(list);
+    expect(counts).toEqual({
+      daily: 23 + 2,
+      sunday: 1 + 1,
+      monday: 11,
+      tuesday: 15,
+      wednesday: 10 + 1,
+      thursday: 13 + 1,
+      friday: 16 + 1,
+      saturday: 1,
+    });
+    for (const sheet of LABEL_SHEETS) {
+      expect(counts[sheet]).toBe(profilesForLabelSheet(list, sheet).length);
+    }
+  });
+});
+
+describe("rearranging (the panel's draft)", () => {
+  const empty: LabelSheetDraft = new Map();
+  const weekly = profile("w", "Sam Gill", [1]);
+  const daily = profile("d", "Riley Chen", [1, 3, 5]);
+  const moved = profile("m", "Jamie Thompson", [5], { labelSheets: ["monday"] });
+
+  it("moves a single-day person: add the new sheet, then drop the old one", () => {
+    // The only sheet can't be cleared: the person keeps at least one.
+    expect(toggleDraftLabelSheet(empty, weekly, "monday")).toBeNull();
+
+    const both = toggleDraftLabelSheet(empty, weekly, "thursday")!;
+    expect(draftLabelSheets(both, weekly)).toEqual(["monday", "thursday"]);
+    expect(isLabelSheetChanged(both, "w")).toBe(true);
+    expect(isDraftLabelSheetMoved(both, weekly)).toBe(true);
+
+    const thursday = toggleDraftLabelSheet(both, weekly, "monday")!;
+    expect(draftLabelSheets(thursday, weekly)).toEqual(["thursday"]);
+    expect(toggleDraftLabelSheet(thursday, weekly, "thursday")).toBeNull();
+    expect(labelSheetAssignments(thursday)).toEqual([{ id: "w", sheets: ["thursday"] }]);
+  });
+
+  it("drops a row from the draft once it is back to what is saved", () => {
+    const changed = toggleDraftLabelSheet(empty, daily, "friday")!;
+    expect(changed.size).toBe(1);
+    const back = toggleDraftLabelSheet(changed, daily, "friday")!;
+    expect(back.size).toBe(0);
+    expect(isLabelSheetChanged(back, "d")).toBe(false);
+    expect(draftLabelSheets(back, daily)).toEqual(["daily"]);
+    expect(labelSheetAssignments(back)).toEqual([]);
+  });
+
+  it("leaves the draft it was given alone", () => {
+    const changed = toggleDraftLabelSheet(empty, daily, "friday")!;
+    expect(empty.size).toBe(0);
+    expect(changed).not.toBe(empty);
+  });
+
+  it("resets a saved move to automatic, sending null", () => {
+    expect(draftLabelSheets(empty, moved)).toEqual(["monday"]);
+    expect(isDraftLabelSheetMoved(empty, moved)).toBe(true);
+    expect(isLabelSheetChanged(empty, "m")).toBe(false);
+
+    const reset = resetDraftLabelSheets(empty, moved);
+    expect(draftLabelSheets(reset, moved)).toEqual(["friday"]);
+    expect(isDraftLabelSheetMoved(reset, moved)).toBe(false);
+    expect(isLabelSheetChanged(reset, "m")).toBe(true);
+    expect(labelSheetAssignments(reset)).toEqual([{ id: "m", sheets: null }]);
+
+    // Resetting a person who isn't moved changes nothing.
+    expect(resetDraftLabelSheets(empty, weekly).size).toBe(0);
+  });
+
+  it("sends null when the chosen sheets come back to just the automatic one", () => {
+    // Saved on Monday; staff pick Friday (the delivery day) by hand.
+    const both = toggleDraftLabelSheet(empty, moved, "friday")!;
+    const friday = toggleDraftLabelSheet(both, moved, "monday")!;
+    expect(draftLabelSheets(friday, moved)).toEqual(["friday"]);
+    expect(isDraftLabelSheetMoved(friday, moved)).toBe(false);
+    expect(labelSheetAssignments(friday)).toEqual([{ id: "m", sheets: null }]);
+    expect(setDraftLabelSheets(empty, moved, ["friday"])).toEqual(friday);
+  });
+
+  it("builds one assignment per changed person, sheets in order", () => {
+    let draft = toggleDraftLabelSheet(empty, weekly, "saturday")!;
+    draft = toggleDraftLabelSheet(draft, weekly, "daily")!;
+    draft = resetDraftLabelSheets(draft, moved);
+    draft = toggleDraftLabelSheet(draft, daily, "tuesday")!;
+    expect(labelSheetAssignments(draft)).toEqual([
+      { id: "w", sheets: ["daily", "monday", "saturday"] },
+      { id: "m", sheets: null },
+      { id: "d", sheets: ["daily", "tuesday"] },
+    ]);
+  });
+
+  it("sends nothing when a moved person is moved away and back", () => {
+    // Saved on Monday (their days give Friday): over to Tuesday, then back.
+    let draft = toggleDraftLabelSheet(empty, moved, "tuesday")!;
+    draft = toggleDraftLabelSheet(draft, moved, "monday")!;
+    expect(draftLabelSheets(draft, moved)).toEqual(["tuesday"]);
+    expect(draft.size).toBe(1);
+    draft = toggleDraftLabelSheet(draft, moved, "monday")!;
+    draft = toggleDraftLabelSheet(draft, moved, "tuesday")!;
+    expect(draftLabelSheets(draft, moved)).toEqual(["monday"]);
+    expect(draft.size).toBe(0);
+    expect(isLabelSheetChanged(draft, "m")).toBe(false);
+    expect(labelSheetAssignments(draft)).toEqual([]);
+  });
+
+  it("tags a row Moved or Extra sheet, as saved and in the draft", () => {
+    // Adding a sheet keeps the usual one: an extra sheet, not a move.
+    const added = toggleDraftLabelSheet(empty, weekly, "thursday")!;
+    expect(draftLabelSheetChange(empty, weekly)).toBeNull();
+    expect(draftLabelSheetChange(added, weekly)).toBe("extra");
+    // Dropping the usual sheet makes it a move.
+    const off = toggleDraftLabelSheet(added, weekly, "monday")!;
+    expect(draftLabelSheetChange(off, weekly)).toBe("moved");
+
+    expect(draftLabelSheetChange(empty, moved)).toBe("moved");
+    const withFriday = toggleDraftLabelSheet(empty, moved, "friday")!;
+    expect(draftLabelSheetChange(withFriday, moved)).toBe("extra");
+    expect(draftLabelSheetChange(resetDraftLabelSheets(empty, moved), moved)).toBeNull();
+  });
+
+  it("compares with the saved choice as it would be stored", () => {
+    // Stored Tuesday on a Tuesday person: the same as automatic.
+    const pinned = profile("p", "Drew Sidhu", [2], { labelSheets: ["tuesday"] });
+    expect(resetDraftLabelSheets(empty, pinned).size).toBe(0);
+    const both = toggleDraftLabelSheet(empty, pinned, "wednesday")!;
+    expect(toggleDraftLabelSheet(both, pinned, "wednesday")!.size).toBe(0);
+  });
+});
+
+describe("searching the panel", () => {
+  const empty: LabelSheetDraft = new Map();
+  const people = [
+    profile("w", "Sam Gill", [1], { deliveryAddress: "5501 204 St", deliveryCity: "Langley" }),
+    profile("d", "Riley Chen", [1, 3, 5]),
+    profile("m", "Jamie Thompson", [5], { labelSheets: ["monday"] }),
+    profile("x", "Casey Brar", [2], { labelSheets: ["daily", "tuesday"] }),
+  ];
+  const find = (query: string, draft: LabelSheetDraft = empty) =>
+    people.filter((p) => matchesLabelSearch(draft, p, query)).map((p) => p.id);
+
+  it("matches everyone on an empty search", () => {
+    expect(find("")).toEqual(["w", "d", "m", "x"]);
+    expect(find("   ")).toEqual(["w", "d", "m", "x"]);
+  });
+
+  it("matches name, address and city, ignoring case and spaces around", () => {
+    expect(find("riley")).toEqual(["d"]);
+    expect(find(" 204 st ")).toEqual(["w"]);
+    expect(find("LANGLEY")).toEqual(["w"]);
+    expect(find("surrey")).toEqual(["d", "m", "x"]);
+    expect(find("nobody")).toEqual([]);
+  });
+
+  it("matches the sheets a person is on", () => {
+    expect(find("monday")).toEqual(["w", "m"]);
+    expect(find("Mon")).toEqual(["w", "m"]);
+    expect(find("daily")).toEqual(["d", "x"]);
+    expect(find("tuesday")).toEqual(["x"]);
+    // Their delivery day alone doesn't count once they are moved off it.
+    expect(find("friday")).toEqual([]);
+    expect(find("deliveries")).toEqual(["d", "x"]);
+  });
+
+  it("matches sheet titles from the start of a word only", () => {
+    // Letters inside "Monday" or "Friday" don't list a whole sheet.
+    expect(find("day")).toEqual([]);
+    expect(find("ond")).toEqual([]);
+    expect(find("esd")).toEqual([]);
+    // "ri" is in Riley's name, not in Casey's "Daily Deliveries".
+    expect(find("ri")).toEqual(["d"]);
+  });
+
+  it("keeps a row being changed in the list, and finds where it is going", () => {
+    const sam = people[0];
+    const moving = toggleDraftLabelSheet(toggleDraftLabelSheet(empty, sam, "saturday")!, sam, "monday")!;
+    expect(draftLabelSheets(moving, sam)).toEqual(["saturday"]);
+    expect(find("monday", moving)).toEqual(["w", "m"]);
+    expect(find("saturday", moving)).toEqual(["w"]);
   });
 });
 

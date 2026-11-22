@@ -15,19 +15,34 @@ import { GET } from "../route";
 
 const store = { id: "store_surrey", slug: "surrey", name: "Beyond Pharmacy Surrey", isActive: true };
 
-function record(id: string, patientName: string, activeDays: string) {
+function record(
+  id: string,
+  patientName: string,
+  activeDays: string,
+  labelSheets: string | null = null,
+  extra: { deliveryAddress?: string; createdAt?: string } = {}
+) {
   return {
     id,
     storeId: store.id,
     patientId: null,
     patientName,
     patientPhone: null,
-    deliveryAddress: `${id} Main St`,
+    deliveryAddress: extra.deliveryAddress ?? `${id} Main St`,
     deliveryCity: "Surrey",
     deliveryPostalCode: "V3W 3L5",
     activeDays,
-    createdAt: new Date("2026-01-01T00:00:00Z"),
+    labelSheets,
+    createdAt: new Date(extra.createdAt ?? "2026-01-01T00:00:00Z"),
   };
+}
+
+// The same person as an older profile, added later at the same address.
+const later = { deliveryAddress: "20150 Fraser Hwy", createdAt: "2026-03-01T00:00:00Z" };
+
+// jsPDF writes text uncompressed, so the names can be read back.
+async function pdfText(res: Response) {
+  return Buffer.from(await res.arrayBuffer()).toString("latin1");
 }
 
 function call(sheet: string | null) {
@@ -85,6 +100,76 @@ describe("GET /api/[store]/recurring/labels", () => {
     expect(mocks.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { storeId: store.id, isActive: true } })
     );
+  });
+
+  it("reads the staff choice of sheets with the profiles", async () => {
+    await call("monday");
+    expect(mocks.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ labelSheets: true, activeDays: true, deliveryPostalCode: true }),
+      })
+    );
+  });
+
+  it("prints a moved person on the sheet staff chose, and not on their old one", async () => {
+    mocks.findMany.mockResolvedValue([
+      record("1", "Avery Sandhu", "[1]", '["friday"]'),
+      record("2", "Jordan Kaur", "[1,3,5]"),
+    ]);
+    const friday = await call("friday");
+    expect(friday.status).toBe(200);
+    expect(await pdfText(friday)).toContain("(Avery Sandhu)");
+
+    // Avery was Monday's only person, so Monday is now empty.
+    const monday = await call("monday");
+    expect(monday.status).toBe(404);
+    expect((await monday.json()).error).toBe("No one is on the Monday label sheet.");
+  });
+
+  it("prints a person on every sheet chosen", async () => {
+    mocks.findMany.mockResolvedValue([record("1", "Avery Sandhu", "[1]", '["daily","saturday"]')]);
+    for (const sheet of ["daily", "saturday"]) {
+      const res = await call(sheet);
+      expect(res.status).toBe(200);
+      expect(await pdfText(res)).toContain("(Avery Sandhu)");
+    }
+    expect((await call("monday")).status).toBe(404);
+  });
+
+  it("falls back to the delivery days when the stored choice is unreadable", async () => {
+    mocks.findMany.mockResolvedValue([record("1", "Avery Sandhu", "[1]", "not json")]);
+    const res = await call("monday");
+    expect(res.status).toBe(200);
+    expect(await pdfText(res)).toContain("(Avery Sandhu)");
+  });
+
+  it("prints a partly duplicated profile on the sheet of the days it keeps", async () => {
+    // Monday is already the older profile's, so the later one keeps Thursday
+    // only: it goes on Thursday's sheet, not Daily (what Mon + Thu would give).
+    mocks.findMany.mockResolvedValue([
+      record("old", "Riley Chen", "[1]", null, { deliveryAddress: "20150 Fraser Hwy" }),
+      record("dup", "Riley Chen", "[1,4]", null, later),
+    ]);
+    const thursday = await call("thursday");
+    expect(thursday.status).toBe(200);
+    expect(await pdfText(thursday)).toContain("(Riley Chen)");
+    expect((await call("monday")).status).toBe(200);
+    const daily = await call("daily");
+    expect(daily.status).toBe(404);
+    expect((await daily.json()).error).toBe("No one is on the Daily Deliveries label sheet.");
+  });
+
+  it("prints a hidden duplicate nowhere, even with sheets chosen for it", async () => {
+    mocks.findMany.mockResolvedValue([
+      record("old", "Riley Chen", "[1]", null, { deliveryAddress: "20150 Fraser Hwy" }),
+      // Every day is already the older profile's: the page doesn't show it.
+      record("hidden", "Riley Chen", "[1]", '["daily","friday"]', later),
+    ]);
+    // Only the older profile prints, on Monday.
+    expect((await call("monday")).status).toBe(200);
+    for (const sheet of ["daily", "sunday", "tuesday", "wednesday", "thursday", "friday", "saturday"]) {
+      expect((await call(sheet)).status).toBe(404);
+    }
   });
 
   it("lets a super-admin (no store) print any store's sheet", async () => {

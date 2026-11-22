@@ -16,6 +16,7 @@ export default function RecurringView({
   zoneHistory,
   fallbackZoneId,
   orders,
+  defaultRearrangeOpen = false,
 }: {
   storeSlug: string;
   // This week's Sunday in Vancouver (YYYY-MM-DD), worked out on the server.
@@ -25,6 +26,8 @@ export default function RecurringView({
   zoneHistory: ComponentProps<typeof RecurringOrderList>["zoneHistory"];
   fallbackZoneId: string | null;
   orders: ComponentProps<typeof RecurringOrderList>["orders"];
+  // Opens the label card's Rearrange panel on load (the style guide's screen).
+  defaultRearrangeOpen?: boolean;
 }) {
   return (
     <div>
@@ -46,7 +49,11 @@ export default function RecurringView({
         <div className="space-y-6 lg:col-span-2">
           <RecurringCalendar storeSlug={storeSlug} drivers={drivers} initialWeekStartKey={weekStartKey} />
           <div data-reveal="">
-            <RecurringLabelSheets storeSlug={storeSlug} orders={orders} />
+            <RecurringLabelSheets
+              storeSlug={storeSlug}
+              orders={orders}
+              defaultRearrangeOpen={defaultRearrangeOpen}
+            />
           </div>
           <div data-reveal="">
             <RecurringOrderList
