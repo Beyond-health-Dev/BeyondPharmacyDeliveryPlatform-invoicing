@@ -59,36 +59,75 @@
     pointer-events: none;
   }
 
+  /* Each circle sets its own size, so the backdrop mixes large and small. */
   .workspace-backdrop > .circle {
-    width: clamp(15rem, 38vw, 36rem);
+    width: var(--workspace-circle-size, clamp(15rem, 38vw, 36rem));
     aspect-ratio: 1;
   }
 
   .workspace-backdrop > .circle--workspace-blue {
+    --workspace-circle-size: clamp(17rem, 42vw, 40rem);
     --workspace-drift-x: 14%;
     --workspace-drift-y: 12%;
     --workspace-drift-duration: 20s;
     --workspace-drift-delay: -7s;
-    top: -26%;
-    left: 11%;
+    top: -30%;
+    left: 12%;
   }
 
   .workspace-backdrop > .circle--workspace-mint {
-    --workspace-drift-x: -16%;
-    --workspace-drift-y: 19%;
+    --workspace-circle-size: clamp(9rem, 22vw, 20rem);
+    --workspace-drift-x: -10%;
+    --workspace-drift-y: 26%;
     --workspace-drift-duration: 24s;
     --workspace-drift-delay: -8s;
-    top: 23%;
-    right: -16%;
+    top: 40%;
+    right: -7%;
   }
 
   .workspace-backdrop > .circle--workspace-blush {
+    --workspace-circle-size: clamp(14rem, 34vw, 32rem);
     --workspace-drift-x: 21%;
     --workspace-drift-y: -19%;
     --workspace-drift-duration: 22s;
     --workspace-drift-delay: -5s;
-    bottom: -29%;
-    left: -12%;
+    bottom: -22%;
+    left: -9%;
+  }
+
+  /* The small circles drift further for their size, mostly along the edge
+     they peek out from, and are a little stronger, so they still show. */
+  .workspace-backdrop > .circle--workspace-butter {
+    --workspace-circle-size: clamp(4.5rem, 9vw, 8rem);
+    --workspace-drift-x: -10%;
+    --workspace-drift-y: 55%;
+    --workspace-drift-duration: 17s;
+    --workspace-drift-delay: -3s;
+    top: 5%;
+    right: -3%;
+    opacity: .9;
+  }
+
+  .workspace-backdrop > .circle--workspace-lilac {
+    --workspace-circle-size: clamp(3.5rem, 7vw, 6.5rem);
+    --workspace-drift-x: 12%;
+    --workspace-drift-y: -60%;
+    --workspace-drift-duration: 19s;
+    --workspace-drift-delay: -11s;
+    top: 46%;
+    left: -1%;
+    opacity: .85;
+  }
+
+  .workspace-backdrop > .circle--workspace-mint-small {
+    --workspace-circle-size: clamp(5.5rem, 12vw, 11rem);
+    --workspace-drift-x: 40%;
+    --workspace-drift-y: -8%;
+    --workspace-drift-duration: 26s;
+    --workspace-drift-delay: -14s;
+    top: 2%;
+    left: -4%;
+    opacity: .75;
   }
 
   .workspace-main {
@@ -927,6 +966,39 @@
 
     .workspace-backdrop {
       inset-inline-start: 0;
+    }
+
+    /* Cards fill the width here, so the circles sit along the side edges,
+       clear of the top bar. */
+    .workspace-backdrop > .circle--workspace-blue {
+      top: 8%;
+      left: -52%;
+    }
+
+    .workspace-backdrop > .circle--workspace-mint {
+      top: 30%;
+      right: -18%;
+    }
+
+    .workspace-backdrop > .circle--workspace-blush {
+      bottom: -10%;
+      left: -30%;
+    }
+
+    .workspace-backdrop > .circle--workspace-butter {
+      top: 5%;
+      right: -6%;
+    }
+
+    .workspace-backdrop > .circle--workspace-lilac {
+      top: 74%;
+      right: -5%;
+      left: auto;
+    }
+
+    .workspace-backdrop > .circle--workspace-mint-small {
+      top: 52%;
+      left: -9%;
     }
 
     .workspace-sidebar {
