@@ -969,36 +969,37 @@
     }
 
     /* Cards fill the width here, so the circles sit along the side edges,
-       clear of the top bar. */
+       below the top bar. Each one hangs off the edge by a share of its own
+       size, so the same part of it shows at every width. */
     .workspace-backdrop > .circle--workspace-blue {
-      top: 8%;
-      left: -52%;
+      top: calc(var(--workspace-topbar) + .75rem);
+      left: calc(var(--workspace-circle-size) * -.75);
     }
 
     .workspace-backdrop > .circle--workspace-mint {
       top: 30%;
-      right: -18%;
+      right: calc(var(--workspace-circle-size) * -.5);
     }
 
     .workspace-backdrop > .circle--workspace-blush {
-      bottom: -10%;
-      left: -30%;
+      bottom: calc(var(--workspace-circle-size) * -.38);
+      left: calc(var(--workspace-circle-size) * -.52);
     }
 
     .workspace-backdrop > .circle--workspace-butter {
-      top: 5%;
-      right: -6%;
+      top: calc(var(--workspace-topbar) + .25rem);
+      right: calc(var(--workspace-circle-size) * -.32);
     }
 
     .workspace-backdrop > .circle--workspace-lilac {
       top: 74%;
-      right: -5%;
+      right: calc(var(--workspace-circle-size) * -.35);
       left: auto;
     }
 
     .workspace-backdrop > .circle--workspace-mint-small {
       top: 52%;
-      left: -9%;
+      left: calc(var(--workspace-circle-size) * -.4);
     }
 
     .workspace-sidebar {
