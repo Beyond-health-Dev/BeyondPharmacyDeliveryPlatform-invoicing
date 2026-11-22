@@ -197,7 +197,7 @@ export default function RecurringLabelSheets({
           </button>
           {rearrangedCount > 0 && (
             <span className="text-xs text-muted tabular-nums">
-              {peopleCount(rearrangedCount)} not on their usual sheet
+              {peopleCount(rearrangedCount)} with label changes
             </span>
           )}
         </div>

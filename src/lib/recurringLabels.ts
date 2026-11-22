@@ -228,7 +228,8 @@ export function draftLabelSheetChange(draft: LabelSheetDraft, profile: DraftProf
 /**
  * The panel's search: the name, address or city, or the title of a sheet the
  * person is on as saved or in the draft ("monday", "daily"), so a row being
- * changed never drops out of the list.
+ * changed never drops out of the list. Sheet titles match from the start of
+ * a word, so typing a name ("Riley", "Day") doesn't also list a whole sheet.
  */
 export function matchesLabelSearch(
   draft: LabelSheetDraft,
@@ -238,12 +239,12 @@ export function matchesLabelSearch(
   const search = query.trim().toLowerCase();
   if (!search) return true;
   const sheets = new Set([...labelSheetsForProfile(profile), ...draftLabelSheets(draft, profile)]);
-  return [
-    profile.patientName,
-    profile.deliveryAddress,
-    profile.deliveryCity ?? "",
-    ...[...sheets].map(labelSheetTitle),
-  ].some((text) => text.toLowerCase().includes(search));
+  const sheetWords = [...sheets].flatMap((sheet) => labelSheetTitle(sheet).toLowerCase().split(" "));
+  return (
+    [profile.patientName, profile.deliveryAddress, profile.deliveryCity ?? ""].some((text) =>
+      text.toLowerCase().includes(search)
+    ) || sheetWords.some((word) => word.startsWith(search))
+  );
 }
 
 /** The row has a change waiting to be saved. */

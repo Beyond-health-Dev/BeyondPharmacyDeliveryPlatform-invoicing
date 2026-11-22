@@ -449,6 +449,16 @@ describe("searching the panel", () => {
     expect(find("tuesday")).toEqual(["x"]);
     // Their delivery day alone doesn't count once they are moved off it.
     expect(find("friday")).toEqual([]);
+    expect(find("deliveries")).toEqual(["d", "x"]);
+  });
+
+  it("matches sheet titles from the start of a word only", () => {
+    // Letters inside "Monday" or "Friday" don't list a whole sheet.
+    expect(find("day")).toEqual([]);
+    expect(find("ond")).toEqual([]);
+    expect(find("esd")).toEqual([]);
+    // "ri" is in Riley's name, not in Casey's "Daily Deliveries".
+    expect(find("ri")).toEqual(["d"]);
   });
 
   it("keeps a row being changed in the list, and finds where it is going", () => {
