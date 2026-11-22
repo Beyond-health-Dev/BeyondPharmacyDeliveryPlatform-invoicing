@@ -122,6 +122,10 @@ model RecurringOrder {
   assignedDriverId        String?
   assignedDriver          User?        @relation("RecurringOrderAssignedDriver", fields: [assignedDriverId], references: [id])
   activeDays              String       @default("[1]") // JSON array of day numbers 0=Sun..6=Sat, e.g. "[1,2,3,4,5]"
+  // The delivery label sheets staff chose for this profile, as a JSON array of
+  // sheet names, e.g. '["monday","thursday"]'. Null = automatic, from
+  // activeDays (see src/lib/recurringLabels.ts). Never changes activeDays.
+  labelSheets             String?
   recurrenceIntervalWeeks Int          @default(1)
   recurrenceAnchorDate    DateTime     @default(now())
   isOnHold                Boolean      @default(false)

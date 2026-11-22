@@ -7,6 +7,9 @@
 // - "daily": every profile that goes out on two or more weekdays.
 // - "sunday".."saturday": profiles whose only weekday is that day (weekly or
 //   every other week). A multi-day profile never lands on a day sheet.
+// Staff can override that per profile (RecurringOrder.labelSheets): move a
+// person to another sheet, or put them on several. A person on two sheets
+// prints on both. The override never changes the delivery days.
 // Every sheet fills whole pages of 30 so no stickers are left blank: each
 // person's copies sit together (A, A, A, B, B, B ...).
 
@@ -42,6 +45,11 @@ export function labelSheetTitle(sheet: LabelSheet) {
   return RECURRING_DAY_NAMES[WEEKDAY_SHEETS.indexOf(sheet)];
 }
 
+/** "Daily", "Sun" ... "Sat", for small pills; labelSheetTitle is the full name. */
+export function labelSheetShortTitle(sheet: LabelSheet) {
+  return sheet === "daily" ? "Daily" : labelSheetTitle(sheet).slice(0, 3);
+}
+
 export function parseLabelSheet(value: string | null | undefined): LabelSheet | null {
   const sheet = (value ?? "").trim().toLowerCase();
   return (LABEL_SHEETS as readonly string[]).includes(sheet) ? (sheet as LabelSheet) : null;
@@ -61,6 +69,8 @@ export interface LabelSheetProfile {
   // number[] or the stored JSON string ("[1,3,5]"); 0 = Sunday.
   activeDays: unknown;
   isActive?: boolean;
+  // The staff choice: LabelSheet[] or the stored JSON string; null = automatic.
+  labelSheets?: unknown;
 }
 
 /** The one sheet a profile with these weekdays prints on, or null if none. */
@@ -68,6 +78,64 @@ export function labelSheetForDays(activeDays: unknown): LabelSheet | null {
   const days = parseRecurringActiveDays(activeDays);
   if (!days) return null;
   return days.length > 1 ? "daily" : WEEKDAY_SHEETS[days[0]];
+}
+
+/**
+ * A staff choice of sheets, as stored ('["thursday","monday"]') or as a list:
+ * the sheets de-duplicated, in LABEL_SHEETS order. Null (automatic) for an
+ * empty list or anything unreadable. Names must match exactly, and one
+ * unknown name makes the whole value unreadable rather than quietly dropping
+ * the person from a sheet.
+ */
+export function parseLabelSheets(value: unknown): LabelSheet[] | null {
+  const parsed: unknown = typeof value === "string" ? parseJson(value) : value;
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const entries: unknown[] = parsed;
+  if (!entries.every((entry) => (LABEL_SHEETS as readonly unknown[]).includes(entry))) return null;
+  return LABEL_SHEETS.filter((sheet) => entries.includes(sheet));
+}
+
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The choice as it is stored: null when it is just the sheet the delivery
+ * days give anyway, so the person follows their days again.
+ */
+export function labelSheetChoice(value: unknown, activeDays: unknown): LabelSheet[] | null {
+  const sheets = parseLabelSheets(value);
+  if (!sheets) return null;
+  return sheets.length === 1 && sheets[0] === labelSheetForDays(activeDays) ? null : sheets;
+}
+
+/**
+ * Every sheet a profile prints on: the staff choice if there is a readable
+ * one, else the sheet its days give. No valid delivery days, no sheet (even
+ * with a choice stored).
+ */
+export function labelSheetsForProfile(
+  profile: Pick<LabelSheetProfile, "activeDays" | "labelSheets">
+): LabelSheet[] {
+  const automatic = labelSheetForDays(profile.activeDays);
+  if (!automatic) return [];
+  return parseLabelSheets(profile.labelSheets) ?? [automatic];
+}
+
+/**
+ * Staff have put this profile on sheets other than the automatic one. A
+ * stored choice that has become the automatic sheet (its days were edited to
+ * match) doesn't count, and nor does one on a profile that prints nowhere.
+ */
+export function isLabelSheetMoved(profile: Pick<LabelSheetProfile, "activeDays" | "labelSheets">) {
+  return (
+    labelSheetForDays(profile.activeDays) !== null &&
+    labelSheetChoice(profile.labelSheets, profile.activeDays) !== null
+  );
 }
 
 const collator = new Intl.Collator("en-CA", { sensitivity: "base", numeric: true });
@@ -92,12 +160,12 @@ export function profilesForLabelSheet<T extends LabelSheetProfile>(
   sheet: LabelSheet
 ): T[] {
   return profiles
-    .filter((profile) => profile.isActive !== false && labelSheetForDays(profile.activeDays) === sheet)
+    .filter((profile) => profile.isActive !== false && labelSheetsForProfile(profile).includes(sheet))
     .sort(compareLabelProfiles);
 }
 
 export function countLabelSheetPeople(
-  profiles: ReadonlyArray<Pick<LabelSheetProfile, "activeDays" | "isActive">>
+  profiles: ReadonlyArray<Pick<LabelSheetProfile, "activeDays" | "isActive" | "labelSheets">>
 ): Record<LabelSheet, number> {
   const counts = Object.fromEntries(LABEL_SHEETS.map((sheet) => [sheet, 0])) as Record<
     LabelSheet,
@@ -105,10 +173,93 @@ export function countLabelSheetPeople(
   >;
   for (const profile of profiles) {
     if (profile.isActive === false) continue;
-    const sheet = labelSheetForDays(profile.activeDays);
-    if (sheet) counts[sheet] += 1;
+    for (const sheet of labelSheetsForProfile(profile)) counts[sheet] += 1;
   }
   return counts;
+}
+
+// ---- Rearranging (the Recurring page's panel) ----
+//
+// The panel keeps a draft of the people it has changed, and only those: id ->
+// their new choice as it will be stored (null = automatic). An entry that
+// comes back to what is saved is dropped, so the draft's size is the number
+// of changes to save.
+
+export type LabelSheetDraft = ReadonlyMap<string, LabelSheet[] | null>;
+
+type DraftProfile = Pick<LabelSheetProfile, "id" | "activeDays" | "labelSheets">;
+
+function sameChoice(a: readonly LabelSheet[] | null, b: readonly LabelSheet[] | null) {
+  if (a === null || b === null) return a === b;
+  return a.length === b.length && a.every((sheet, i) => sheet === b[i]);
+}
+
+/** The draft's version of a profile: its draft choice if changed, else what is saved. */
+function draftProfile(draft: LabelSheetDraft, profile: DraftProfile): DraftProfile {
+  return draft.has(profile.id) ? { ...profile, labelSheets: draft.get(profile.id) } : profile;
+}
+
+/** The sheets a row shows. */
+export function draftLabelSheets(draft: LabelSheetDraft, profile: DraftProfile) {
+  return labelSheetsForProfile(draftProfile(draft, profile));
+}
+
+/** Not on the automatic sheet, as saved or in the draft. */
+export function isDraftLabelSheetMoved(draft: LabelSheetDraft, profile: DraftProfile) {
+  return isLabelSheetMoved(draftProfile(draft, profile));
+}
+
+/** The row has a change waiting to be saved. */
+export function isLabelSheetChanged(draft: LabelSheetDraft, id: string) {
+  return draft.has(id);
+}
+
+/** Sets a row's sheets (null = automatic); a row back where it was saved leaves the draft. */
+export function setDraftLabelSheets(
+  draft: LabelSheetDraft,
+  profile: DraftProfile,
+  sheets: readonly LabelSheet[] | null
+): LabelSheetDraft {
+  const choice = labelSheetChoice(sheets, profile.activeDays);
+  const next = new Map(draft);
+  if (sameChoice(choice, labelSheetChoice(profile.labelSheets, profile.activeDays))) {
+    next.delete(profile.id);
+  } else {
+    next.set(profile.id, choice);
+  }
+  return next;
+}
+
+/**
+ * Pressing a sheet's pill adds or removes that sheet. Null when it would
+ * leave the person on no sheet: everyone keeps at least one.
+ */
+export function toggleDraftLabelSheet(
+  draft: LabelSheetDraft,
+  profile: DraftProfile,
+  sheet: LabelSheet
+): LabelSheetDraft | null {
+  const current = draftLabelSheets(draft, profile);
+  const next = current.includes(sheet)
+    ? current.filter((s) => s !== sheet)
+    : [...current, sheet];
+  return next.length === 0 ? null : setDraftLabelSheets(draft, profile, next);
+}
+
+/** Back to the sheet the delivery days give. */
+export function resetDraftLabelSheets(draft: LabelSheetDraft, profile: DraftProfile) {
+  return setDraftLabelSheets(draft, profile, null);
+}
+
+export interface LabelSheetAssignment {
+  id: string;
+  // Null puts the person back on the automatic sheet.
+  sheets: LabelSheet[] | null;
+}
+
+/** The save request's assignments: one per changed person. */
+export function labelSheetAssignments(draft: LabelSheetDraft): LabelSheetAssignment[] {
+  return [...draft].map(([id, sheets]) => ({ id, sheets }));
 }
 
 // ---- Filling whole pages ----

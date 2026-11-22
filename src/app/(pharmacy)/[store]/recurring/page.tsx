@@ -3,6 +3,7 @@ import { resolveStore } from "@/lib/store";
 import { notFound } from "next/navigation";
 import RecurringView from "./RecurringView";
 import { visibleRecurringProfiles } from "@/lib/recurringDuplicateGuard";
+import { parseLabelSheets } from "@/lib/recurringLabels";
 import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { getZoneSuggestionData } from "@/lib/zoneHistory";
 import { recurringSkipScope } from "@/lib/recurringHolds";
@@ -83,6 +84,8 @@ export default async function RecurringPage({
     holdUpcoming: o.isOnHold && !!o.holdStart && o.holdStart > todayStart,
     assignedDriverId: o.assignedDriverId,
     assignedDriverName: o.assignedDriver?.name ?? null,
+    // The label sheets staff chose; null = automatic, from the days above.
+    labelSheets: parseLabelSheets(o.labelSheets),
   }));
 
   return (

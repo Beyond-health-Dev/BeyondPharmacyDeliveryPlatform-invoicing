@@ -16,6 +16,7 @@ import {
   tintedLinkButton,
 } from "@/lib/portalStyles";
 import { BANNER_CLASSES } from "@/lib/statusTheme";
+import type { LabelSheet } from "@/lib/recurringLabels";
 import {
   describeZoneSuggestion,
   suggestZone,
@@ -59,6 +60,8 @@ interface RecurringOrderItem {
   holdUpcoming: boolean;
   assignedDriverId: string | null;
   assignedDriverName: string | null;
+  // Delivery label sheets staff chose (Delivery Labels card); null = automatic.
+  labelSheets: LabelSheet[] | null;
 }
 
 // Not on a vacation hold, or the hold hasn't started yet: deliveries (and so

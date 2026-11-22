@@ -74,6 +74,15 @@ function anchorAction(path: string, method: string): Response | null {
     : json({ message: "Cancelled. It was never sent to Anchor." });
 }
 
+function labelAssignmentCount(body: unknown) {
+  try {
+    const parsed = typeof body === "string" ? JSON.parse(body) : null;
+    return Array.isArray(parsed?.assignments) ? parsed.assignments.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function answer(url: URL, method: string, body: unknown): Response {
   // /api/<store>/<...rest>
   const [, , ...rest] = url.pathname.split("/").filter(Boolean);
@@ -85,6 +94,11 @@ function answer(url: URL, method: string, body: unknown): Response {
   }
   const action = anchorAction(path, method);
   if (action) return action;
+  // Saving the Rearrange labels panel: the route answers with counts, and the
+  // panel only takes that reply as saved.
+  if (method === "PUT" && path === "recurring/labels/assignments") {
+    return json({ updated: labelAssignmentCount(body), missing: 0 });
+  }
   if (method !== "GET" && method !== "HEAD") return json({ ok: true });
   if (path === "recurring/labels") {
     return json({ error: "Label PDFs need the real server — the style guide has no database." }, 404);

@@ -107,6 +107,8 @@ function renderScreen(path: string) {
         </Pharmacy>
       );
     case "recurring":
+    // The Delivery Labels card's Rearrange panel, open.
+    case "recurring/labels":
       return (
         <Pharmacy>
           <RecurringView
@@ -117,6 +119,7 @@ function renderScreen(path: string) {
             zoneHistory={fx.zoneHistory}
             fallbackZoneId="z_surrey"
             orders={fx.recurringOrders}
+            defaultRearrangeOpen={path === "recurring/labels"}
           />
         </Pharmacy>
       );

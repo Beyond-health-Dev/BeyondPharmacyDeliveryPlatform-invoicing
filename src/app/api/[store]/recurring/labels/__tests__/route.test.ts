@@ -15,7 +15,7 @@ import { GET } from "../route";
 
 const store = { id: "store_surrey", slug: "surrey", name: "Beyond Pharmacy Surrey", isActive: true };
 
-function record(id: string, patientName: string, activeDays: string) {
+function record(id: string, patientName: string, activeDays: string, labelSheets: string | null = null) {
   return {
     id,
     storeId: store.id,
@@ -26,8 +26,14 @@ function record(id: string, patientName: string, activeDays: string) {
     deliveryCity: "Surrey",
     deliveryPostalCode: "V3W 3L5",
     activeDays,
+    labelSheets,
     createdAt: new Date("2026-01-01T00:00:00Z"),
   };
+}
+
+// jsPDF writes text uncompressed, so the names can be read back.
+async function pdfText(res: Response) {
+  return Buffer.from(await res.arrayBuffer()).toString("latin1");
 }
 
 function call(sheet: string | null) {
@@ -85,6 +91,47 @@ describe("GET /api/[store]/recurring/labels", () => {
     expect(mocks.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { storeId: store.id, isActive: true } })
     );
+  });
+
+  it("reads the staff choice of sheets with the profiles", async () => {
+    await call("monday");
+    expect(mocks.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ labelSheets: true, activeDays: true, deliveryPostalCode: true }),
+      })
+    );
+  });
+
+  it("prints a moved person on the sheet staff chose, and not on their old one", async () => {
+    mocks.findMany.mockResolvedValue([
+      record("1", "Avery Sandhu", "[1]", '["friday"]'),
+      record("2", "Jordan Kaur", "[1,3,5]"),
+    ]);
+    const friday = await call("friday");
+    expect(friday.status).toBe(200);
+    expect(await pdfText(friday)).toContain("(Avery Sandhu)");
+
+    // Avery was Monday's only person, so Monday is now empty.
+    const monday = await call("monday");
+    expect(monday.status).toBe(404);
+    expect((await monday.json()).error).toBe("No one is on the Monday label sheet.");
+  });
+
+  it("prints a person on every sheet chosen", async () => {
+    mocks.findMany.mockResolvedValue([record("1", "Avery Sandhu", "[1]", '["daily","saturday"]')]);
+    for (const sheet of ["daily", "saturday"]) {
+      const res = await call(sheet);
+      expect(res.status).toBe(200);
+      expect(await pdfText(res)).toContain("(Avery Sandhu)");
+    }
+    expect((await call("monday")).status).toBe(404);
+  });
+
+  it("falls back to the delivery days when the stored choice is unreadable", async () => {
+    mocks.findMany.mockResolvedValue([record("1", "Avery Sandhu", "[1]", "not json")]);
+    const res = await call("monday");
+    expect(res.status).toBe(200);
+    expect(await pdfText(res)).toContain("(Avery Sandhu)");
   });
 
   it("lets a super-admin (no store) print any store's sheet", async () => {

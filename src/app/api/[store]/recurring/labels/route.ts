@@ -18,7 +18,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET ?sheet=daily|sunday|...|saturday — an Avery 5160 PDF of preset delivery
- * labels for that sheet's recurring deliveries, filled to whole pages.
+ * labels for that sheet's recurring deliveries, filled to whole pages. Staff
+ * choose who is on which sheet with PUT ./assignments.
  */
 export async function GET(
   req: NextRequest,
@@ -40,11 +41,12 @@ export async function GET(
 
   const recurringOrders = await prisma.recurringOrder.findMany({
     where: { storeId: store.id, isActive: true },
-    select: recurringDuplicateSelect,
+    select: { ...recurringDuplicateSelect, labelSheets: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
-  // Same profiles, and same days, as the Recurring page shows.
+  // Same profiles, and same days, as the Recurring page shows; then the
+  // sheets staff chose (order.labelSheets) on top.
   const profiles = visibleRecurringProfiles(recurringOrders).map(({ order, activeDays }) => ({
     ...order,
     activeDays,
