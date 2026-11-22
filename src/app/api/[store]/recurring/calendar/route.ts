@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireStoreAdmin } from "@/lib/storeAccess";
 import { prisma } from "@/lib/db";
 import { isRecurringScheduleDue } from "@/lib/cron";
+import { isVacationHoldActive, sameUtcDay } from "@/lib/recurringHolds";
 import { holdsForCalendarDate } from "@/lib/weeklyHolds";
 import {
   recurringPeopleMatch,
@@ -54,14 +55,6 @@ function parseActiveDays(value: string) {
   return null;
 }
 
-function sameUtcDay(a: Date, b: Date) {
-  return (
-    a.getUTCFullYear() === b.getUTCFullYear() &&
-    a.getUTCMonth() === b.getUTCMonth() &&
-    a.getUTCDate() === b.getUTCDate()
-  );
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ store: string }> }
@@ -109,11 +102,16 @@ export async function GET(
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
-  const instances = [];
-  // De-dup identical recurring profiles per calendar day. Bucketed by date so the
-  // fuzzy match only runs against same-day candidates instead of every instance seen.
-  const seenByDate = new Map<string, RecurringPersonInput[]>();
-
+  // Every scheduled delivery in the range, oldest profile first, as the order
+  // generator walks them.
+  const candidates: Array<{
+    recurring: (typeof recurringOrders)[number];
+    day: Date;
+    weekStart: Date;
+    instanceDate: string;
+    onVacation: boolean;
+    person: RecurringPersonInput;
+  }> = [];
   for (const recurring of recurringOrders) {
     const activeDays = parseActiveDays(recurring.activeDays);
     if (!activeDays) continue;
@@ -124,32 +122,58 @@ export async function GET(
       const weekStart = utcWeekStart(day);
       if (!isRecurringScheduleDue(recurring, { weekStart })) continue;
 
+      candidates.push({
+        recurring,
+        day,
+        weekStart,
+        instanceDate: dateKey(day),
+        onVacation: isVacationHoldActive(recurring, day),
+        person: {
+          patientId: recurring.patientId,
+          patientName: recurring.patientName,
+          patientPhone: recurring.patientPhone,
+          deliveryAddress: recurring.deliveryAddress,
+          deliveryCity: recurring.deliveryCity,
+          deliveryPostalCode: recurring.deliveryPostalCode,
+        },
+      });
+    }
+  }
+
+  // De-dup identical recurring profiles per calendar day the way the order
+  // generator does. It drops profiles on vacation first, so a newer profile
+  // for the same patient still delivers; a vacation is shown only when no
+  // other profile delivers to that patient that day. It checks day and week
+  // skips after de-duping, so a skipped profile still stands in for its
+  // duplicates. Bucketed by date so the fuzzy match only runs against same-day
+  // candidates instead of every instance seen.
+  const seenByDate = new Map<string, RecurringPersonInput[]>();
+  const shown = new Set<(typeof candidates)[number]>();
+  for (const vacationPass of [false, true]) {
+    for (const candidate of candidates) {
+      if (candidate.onVacation !== vacationPass) continue;
+      const seenForDate = seenByDate.get(candidate.instanceDate);
+      if (seenForDate?.some((seen) => recurringPeopleMatch(seen, candidate.person))) {
+        continue;
+      }
+      if (seenForDate) {
+        seenForDate.push(candidate.person);
+      } else {
+        seenByDate.set(candidate.instanceDate, [candidate.person]);
+      }
+      shown.add(candidate);
+    }
+  }
+
+  const instances = candidates
+    .filter((candidate) => shown.has(candidate))
+    .map(({ recurring, day, weekStart, instanceDate }) => {
       const holdDetails = holdsForCalendarDate(recurring.skips, recurring, day, weekStart);
       const hold = holdDetails[0];
       const order = recurring.orders.find((candidate) =>
         sameUtcDay(candidate.scheduledDate, day)
       );
-      const instanceDate = dateKey(day);
-      const person = {
-        patientId: recurring.patientId,
-        patientName: recurring.patientName,
-        patientPhone: recurring.patientPhone,
-        deliveryAddress: recurring.deliveryAddress,
-        deliveryCity: recurring.deliveryCity,
-        deliveryPostalCode: recurring.deliveryPostalCode,
-      };
-
-      const seenForDate = seenByDate.get(instanceDate);
-      if (seenForDate?.some((seen) => recurringPeopleMatch(seen, person))) {
-        continue;
-      }
-      if (seenForDate) {
-        seenForDate.push(person);
-      } else {
-        seenByDate.set(instanceDate, [person]);
-      }
-
-      instances.push({
+      return {
         id: `${recurring.id}:${instanceDate}`,
         recurringOrderId: recurring.id,
         date: instanceDate,
@@ -169,9 +193,8 @@ export async function GET(
         holdDetails,
         generatedOrderId: order?.id ?? null,
         generatedOrderStatus: order?.status ?? null,
-      });
-    }
-  }
+      };
+    });
 
   return NextResponse.json({
     start: dateKey(start),

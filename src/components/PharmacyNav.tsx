@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import {
   ArrowUpRight,
@@ -70,6 +70,21 @@ export default function PharmacyNav({
   const storeLabel = stores.find((store) => store.slug === storeSlug)?.label ?? storeName;
   const otherStores = stores.filter((store) => store.slug !== storeSlug);
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+
+  // Escape closes the open menu wherever focus is, and hands focus back to
+  // its button. A dialog or popover on top handles its own Escape.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], [aria-modal="true"]')) return;
+      setMobileOpen(false);
+      mobileToggle.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [mobileOpen]);
+
   const activeSection = navigation
     .flatMap(({ sections }) => sections)
     .find(({ path }) => isActive(base + "/" + path));
@@ -124,12 +139,6 @@ export default function PharmacyNav({
         id="pharmacy-sidebar"
         className="workspace-sidebar"
         data-open={mobileOpen}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && mobileOpen) {
-            setMobileOpen(false);
-            mobileToggle.current?.focus();
-          }
-        }}
       >
         <Link href={dashboardHref} className="workspace-brand" onClick={() => setMobileOpen(false)}>
           <Image src={logo} alt="Beyond Pharmacy" preload />

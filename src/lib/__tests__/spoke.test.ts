@@ -16,7 +16,10 @@ describe("getSpokeTrackingUrl", () => {
   });
 
   it("treats missing or unusable tracking data as unavailable", () => {
-    for (const value of [null, undefined, "", "/stops/sample", {}, "http://tracking.example.test/sample"]) {
+    for (const value of [
+      null, undefined, "", "/stops/sample", {}, "http://tracking.example.test/sample",
+      "javascript:alert(1)", "https://user:secret@tracking.example.test/sample", "https://user@tracking.example.test/sample",
+    ]) {
       expect(getSpokeTrackingUrl(value)).toBeNull();
     }
   });

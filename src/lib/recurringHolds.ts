@@ -34,7 +34,8 @@ export function recurringSkipScope(skip: RecurringSkipCandidate): RecurringSkipS
   return skip.skipDate.getUTCDay() === 0 && skip.reason === WEEK_SKIP_REASON ? "WEEK" : "DAY";
 }
 
-function sameUtcDay(a: Date, b: Date) {
+/** Same calendar day, ignoring the time; the calendar matches skips this way too. */
+export function sameUtcDay(a: Date, b: Date) {
   return (
     a.getUTCFullYear() === b.getUTCFullYear() &&
     a.getUTCMonth() === b.getUTCMonth() &&

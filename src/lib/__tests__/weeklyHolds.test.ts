@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { groupWeeklyHolds, holdsForCalendarDate, type WeeklyHoldInstance } from "@/lib/weeklyHolds";
-import { WEEK_OVER_DAY } from "@/lib/recurringHolds";
+import { findRecurringSkipForDate, WEEK_OVER_DAY, WEEK_SKIP_REASON } from "@/lib/recurringHolds";
 
 const date = (key: string) => new Date(key + "T00:00:00Z");
 const sunday = date("2026-11-22");
@@ -24,10 +24,28 @@ describe("weekly calendar holds", () => {
   });
   it("shows the stored Sunday reason only on Sunday when a week skip shares that row", () => {
     const combined = [{ scope: WEEK_OVER_DAY, skipDate: sunday, reason: "Sunday note" }];
+    // The week part reads like any other Skip This Week.
     expect(holdsForCalendarDate(combined, vacation, sunday, sunday)).toEqual([
-      { type: "WEEK", reason: null }, { type: "INSTANCE", reason: "Sunday note" },
+      { type: "WEEK", reason: WEEK_SKIP_REASON }, { type: "INSTANCE", reason: "Sunday note" },
     ]);
-    expect(holdsForCalendarDate(combined, vacation, date("2026-11-25"), sunday)).toEqual([{ type: "WEEK", reason: null }]);
+    expect(holdsForCalendarDate(combined, vacation, date("2026-11-25"), sunday)).toEqual([
+      { type: "WEEK", reason: WEEK_SKIP_REASON },
+    ]);
+  });
+  it("matches skips by calendar day, like the order generator, even when the time isn't midnight", () => {
+    const noVacation = { isOnHold: false, holdStart: null, holdEnd: null };
+    const week = { scope: "WEEK", skipDate: new Date("2026-11-22T08:00:00Z"), reason: WEEK_SKIP_REASON };
+    const day = { scope: "DAY", skipDate: new Date("2026-11-24T17:30:00Z"), reason: "One-day note" };
+    expect(holdsForCalendarDate([week, day], noVacation, tuesday, sunday)).toEqual([
+      { type: "WEEK", reason: WEEK_SKIP_REASON }, { type: "INSTANCE", reason: "One-day note" },
+    ]);
+    for (const skip of [week, day]) {
+      const generator = findRecurringSkipForDate([skip], { dayStart: tuesday, weekStart: sunday });
+      expect(generator).toBe(skip);
+    }
+    // Another day of that week isn't held by the one-day row.
+    expect(holdsForCalendarDate([day], noVacation, date("2026-11-25"), sunday)).toEqual([]);
+    expect(findRecurringSkipForDate([day], { dayStart: date("2026-11-25"), weekStart: sunday })).toBeUndefined();
   });
   it("counts a linked patient once across profiles and groups each reason's affected dates in order", () => {
     const details = [{ type: "INSTANCE" as const, reason: "Collecting in store" }, { type: "WEEK" as const, reason: "Away" }];

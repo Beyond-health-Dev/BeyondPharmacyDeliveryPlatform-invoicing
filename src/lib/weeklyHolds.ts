@@ -1,4 +1,6 @@
-import { isVacationHoldActive, recurringSkipScope, WEEK_OVER_DAY, type RecurringSkipCandidate, type VacationHold } from "./recurringHolds";
+import {
+  isVacationHoldActive, recurringSkipScope, sameUtcDay, WEEK_OVER_DAY, WEEK_SKIP_REASON, type RecurringSkipCandidate, type VacationHold,
+} from "./recurringHolds";
 
 export type CalendarHold = { type: "INSTANCE" | "WEEK" | "TEMPLATE"; reason: string | null };
 
@@ -7,13 +9,16 @@ export type CalendarHold = { type: "INSTANCE" | "WEEK" | "TEMPLATE"; reason: str
 export function holdsForCalendarDate(
   skips: readonly RecurringSkipCandidate[], vacation: VacationHold, day: Date, sunday: Date,
 ): CalendarHold[] {
-  const week = skips.find((skip) => skip.skipDate.getTime() === sunday.getTime() && recurringSkipScope(skip) === "WEEK");
-  const singleDay = skips.find((skip) => skip.skipDate.getTime() === day.getTime() && (
+  // Matched by calendar day, as the order generator does, so the two agree.
+  const week = skips.find((skip) => sameUtcDay(skip.skipDate, sunday) && recurringSkipScope(skip) === "WEEK");
+  const singleDay = skips.find((skip) => sameUtcDay(skip.skipDate, day) && (
     recurringSkipScope(skip) === "DAY" || skip.scope === WEEK_OVER_DAY
   ));
   const holds: CalendarHold[] = [];
-  // A combined Sunday row stores only the one-day reason.
-  if (week) holds.push({ type: "WEEK", reason: week.scope === WEEK_OVER_DAY ? null : week.reason?.trim() || null });
+  // A combined Sunday row stores only the one-day reason. Skip This Week
+  // always saves WEEK_SKIP_REASON, and undoing the day puts it back, so the
+  // week part shows that.
+  if (week) holds.push({ type: "WEEK", reason: week.scope === WEEK_OVER_DAY ? WEEK_SKIP_REASON : week.reason?.trim() || null });
   if (singleDay) holds.push({ type: "INSTANCE", reason: singleDay.reason?.trim() || null });
   if (isVacationHoldActive(vacation, day)) holds.push({ type: "TEMPLATE", reason: null });
   return holds;
@@ -30,6 +35,22 @@ export interface WeeklyHoldInstance {
   holdType: CalendarHold["type"] | null;
   holdReason: string | null;
   holdDetails?: CalendarHold[];
+}
+
+/** How the Weekly holds panel and the quick view name each kind of hold. */
+export const HOLD_TYPE_LABELS: Record<CalendarHold["type"], string> = {
+  INSTANCE: "One-day hold", WEEK: "Week skipped", TEMPLATE: "Vacation hold",
+};
+
+/** The note shown with a hold. A vacation needs none; a skip without one says so. */
+export function holdNote(hold: CalendarHold) {
+  return hold.reason?.trim() || (hold.type === "TEMPLATE" ? null : "No reason recorded");
+}
+
+/** Every hold on one delivery, primary first, for rows with or without the full list. */
+export function instanceHolds(row: WeeklyHoldInstance): CalendarHold[] {
+  if (!row.isHeld) return [];
+  return row.holdDetails?.length ? row.holdDetails : [{ type: row.holdType ?? "INSTANCE", reason: row.holdReason }];
 }
 
 type HoldDates = CalendarHold & { dates: string[] };
@@ -52,8 +73,7 @@ export function groupWeeklyHolds(instances: readonly WeeklyHoldInstance[]) {
       patients.set(id, patient);
       nameCounts.set(patient.name, (nameCounts.get(patient.name) ?? 0) + 1);
     }
-    const details = row.holdDetails?.length ? row.holdDetails : [{ type: row.holdType ?? "INSTANCE", reason: row.holdReason }];
-    for (const detail of details) {
+    for (const detail of instanceHolds(row)) {
       const reason = detail.reason?.trim() || null;
       const key = JSON.stringify([detail.type, reason]);
       let group = patient.reasons.get(key);

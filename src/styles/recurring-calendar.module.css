@@ -138,6 +138,9 @@
 }
 
 .week {
+  /* Holds the days' absolutely placed screen-reader text, which otherwise
+     escapes the scroller and widens the page on a phone. */
+  position: relative;
   display: grid;
   grid-template-columns: repeat(7, minmax(5.5rem, 1fr));
   min-height: 13rem;
@@ -323,7 +326,9 @@
   font-size: .765625rem;
 }
 .holdsHeader p { margin-top: .16rem; }
-.holdsClose { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .4rem; cursor: pointer; }
+.holdsClose { position: relative; display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .4rem; cursor: pointer; }
+/* A 44px tap area; the header's padding leaves room for it. */
+.holdsClose::after { position: absolute; inset: -6px; content: ""; }
 .holdsBody { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .holdPatients { padding-inline: 1.1rem; list-style: none; }
 .holdPatients > li { padding-block: .75rem; overflow-wrap: anywhere; }

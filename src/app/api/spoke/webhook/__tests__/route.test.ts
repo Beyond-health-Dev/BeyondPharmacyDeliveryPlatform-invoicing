@@ -118,6 +118,45 @@ describe("Spoke webhook failed-delivery alert", () => {
   });
 });
 
+describe("Spoke webhook tracking link", () => {
+  const EARLIER = "https://track.example.test/stops/earlier";
+  const event = (type: string, data: Record<string, unknown> = {}) => ({
+    type,
+    data: { id: STOP, orderInfo: { sellerOrderId: "order-1" }, ...data },
+  });
+  const sentRow = (trackingLink: string | null = EARLIER) =>
+    table.addRow({ idempotencyKey: "order-1", status: "SUBMITTED", spokeStopId: STOP, trackingLink });
+
+  it("stores a valid HTTPS link from Anchor", async () => {
+    const sent = sentRow(null);
+    const link = "https://track.example.test/stops/s1?key=a%2Bb";
+
+    await post(event("stop.tracking_link_added", { trackingLink: link }));
+
+    expect(table.row(sent.id)).toMatchObject({ trackingLink: link, status: "SUBMITTED" });
+  });
+
+  it.each([
+    ["an http: link", "http://track.example.test/stops/s1"],
+    ["a javascript: link", "javascript:alert(document.cookie)"],
+    ["a link with a username and password", "https://user:secret@track.example.test/stops/s1"],
+  ])("keeps the earlier link instead of %s", async (_label, link) => {
+    const sent = sentRow();
+
+    await post(event("stop.tracking_link_added", { trackingLink: link }));
+
+    expect(table.row(sent.id).trackingLink).toBe(EARLIER);
+  });
+
+  it("keeps the earlier link when an event has none", async () => {
+    const sent = sentRow();
+
+    await post(event("stop.allocated"));
+
+    expect(table.row(sent.id)).toMatchObject({ trackingLink: EARLIER, lastWebhookEventType: "stop.allocated" });
+  });
+});
+
 describe("Spoke webhook for an order cancelled here", () => {
   const PLAN_STOP = "plans/p1/stops/s1";
   // Anchor moved the stop onto a route, so its events carry the route's stop

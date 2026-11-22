@@ -79,9 +79,12 @@ function uniqueError(target: string) {
   });
 }
 
+// As Prisma does, an undefined field leaves the column unchanged.
 function stored(data: Record<string, unknown>) {
   return Object.fromEntries(
-    Object.entries(data).map(([key, value]) => [key, value === Prisma.JsonNull ? null : value])
+    Object.entries(data)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, value === Prisma.JsonNull ? null : value])
   );
 }
 

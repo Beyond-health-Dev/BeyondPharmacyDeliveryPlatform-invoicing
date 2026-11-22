@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { auth } from "@/lib/auth";
+import { requireStoreAdmin } from "@/lib/storeAccess";
 import { resolveStore } from "@/lib/store";
 import { getVancouverDeliveryDateInfo, isRecurringScheduleDue } from "@/lib/cron";
 import { SpokeDispatchError } from "@/lib/spoke";
@@ -58,15 +58,9 @@ export async function POST(
   { params }: { params: Promise<{ store: string }> }
 ) {
   const { store: storeSlug } = await params;
-  const store = await resolveStore(storeSlug);
-  if (!store) {
-    return NextResponse.json({ error: "Store not found" }, { status: 404 });
-  }
-
-  const session = await auth();
-  if (!session?.user || session.user.role !== "PHARMACY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = await requireStoreAdmin(await resolveStore(storeSlug));
+  if (access.error) return access.error;
+  const { store, session } = access;
 
   const body = await req.json();
   const assignedDriverId = normalizeOptionalId(body.assignedDriverId);

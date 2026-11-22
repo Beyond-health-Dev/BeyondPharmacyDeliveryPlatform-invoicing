@@ -105,8 +105,18 @@ function SpokeTracking({ delivery }: { delivery: DashboardDelivery }) {
     );
   }
   const finished = delivery.status === "DELIVERED" || delivery.status === "DELIVERY_FAILED";
-  return <span className="delivery-tracking-note">{finished ? "Unavailable" : "Awaiting link"}</span>;
+  // A held Anchor order goes out at 6 AM, so Spoke can't have sent a link yet.
+  const note = finished ? "Unavailable" : delivery.status === "SCHEDULED" ? "Not sent yet" : "Awaiting link";
+  return <span className="delivery-tracking-note">{note}</span>;
 }
+
+// ARIA doesn't name a plain span, so the words are read from hidden text.
+const noActions = (
+  <span>
+    <span aria-hidden="true">—</span>
+    <span className="sr-only">No actions</span>
+  </span>
+);
 
 export default function DashboardView({
   storeSlug,
@@ -174,7 +184,7 @@ export default function DashboardView({
             </Link>
           </div>
           {heldForAnchorCount > 0 && (
-            <Link href={`/${storeSlug}/orders?status=${WAITING_FILTER}`} className="delivery-text-link mx-4 mb-2">
+            <Link href={`/${storeSlug}/orders?status=${WAITING_FILTER}`} className="delivery-text-link delivery-waiting-link">
               {heldForAnchorCount} {heldForAnchorCount === 1 ? "order" : "orders"} waiting to go to Anchor
             </Link>
           )}
@@ -239,11 +249,11 @@ export default function DashboardView({
                           hasAnchorStop={order.hasAnchorStop}
                           patientName={order.patientName}
                           onAttentionRow={order.needsAttention || groupStatus(order.status) === "attention"}
-                          noAction={<span aria-label="No actions">—</span>}
+                          noAction={noActions}
                           storeSlug={storeSlug}
                         />
                       ) : (
-                        <span aria-label="No actions">—</span>
+                        noActions
                       )}
                     </td>
                   </tr>

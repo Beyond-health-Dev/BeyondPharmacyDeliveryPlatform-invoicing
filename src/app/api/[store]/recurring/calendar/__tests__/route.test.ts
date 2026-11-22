@@ -107,4 +107,40 @@ describe("GET /api/[store]/recurring/calendar", () => {
       "vacation 2026-10-21": "TEMPLATE",
     });
   });
+
+  // Duplicate profiles are removed in the order generator's order (cron.ts):
+  // vacations first, then duplicates, then day and week skips.
+  describe("duplicate profiles for one patient", () => {
+    const samePatient = { patientId: "patient-1", patientName: "Sample Patient", deliveryAddress: "1 Sample Rd", activeDays: "[3]" };
+
+    it("shows the newer profile's delivery when the older one is on vacation, as it still goes out", async () => {
+      mocks.findMany.mockResolvedValue([
+        profile("older", { ...samePatient, isOnHold: true, holdStart: date("2026-10-20"), holdEnd: date("2026-10-30") }),
+        profile("newer", samePatient),
+      ]);
+      const { instances } = await (await calendar()).json();
+      expect(instances).toEqual([
+        expect.objectContaining({ recurringOrderId: "newer", date: "2026-10-21", isHeld: false, holdDetails: [] }),
+      ]);
+    });
+
+    it("shows one vacation hold when every profile for the patient is away", async () => {
+      const away = { ...samePatient, isOnHold: true, holdStart: date("2026-10-20"), holdEnd: date("2026-10-30") };
+      mocks.findMany.mockResolvedValue([profile("older", away), profile("newer", away)]);
+      expect(await holds()).toEqual({ "older 2026-10-21": "TEMPLATE" });
+    });
+
+    it("keeps the older profile's day or week skip, which stops the newer one too", async () => {
+      for (const skip of [
+        { skipDate: date("2026-10-21"), scope: "DAY", reason: "In hospital" },
+        { skipDate: date("2026-10-18"), scope: "WEEK", reason: "Patient picked up in-store" },
+      ]) {
+        mocks.findMany.mockResolvedValue([
+          profile("older", { ...samePatient, skips: [skip] }),
+          profile("newer", samePatient),
+        ]);
+        expect(await holds()).toEqual({ "older 2026-10-21": skip.scope === "DAY" ? "INSTANCE" : "WEEK" });
+      }
+    });
+  });
 });

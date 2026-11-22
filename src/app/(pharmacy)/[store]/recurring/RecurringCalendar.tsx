@@ -15,7 +15,7 @@ import {
 } from "@/lib/portalStyles";
 import { BANNER_CLASSES } from "@/lib/statusTheme";
 import { vancouverWeekStartKey } from "@/lib/vancouverDate";
-import type { WeeklyHoldInstance } from "@/lib/weeklyHolds";
+import { holdNote, HOLD_TYPE_LABELS, instanceHolds, type WeeklyHoldInstance } from "@/lib/weeklyHolds";
 import WeeklyHolds from "./WeeklyHolds";
 import styles from "@/styles/recurring-calendar.module.css";
 
@@ -52,6 +52,15 @@ interface CalendarInstance extends WeeklyHoldInstance {
 
 interface CalendarResponse {
   instances: CalendarInstance[];
+}
+
+interface CalendarResult {
+  // The store and week the reply is for, and that plus the revision.
+  week: string;
+  key: string;
+  // The week's last rows; null until a read for this week succeeds.
+  instances: CalendarInstance[] | null;
+  error: string;
 }
 const NO_INSTANCES: CalendarInstance[] = [];
 
@@ -117,7 +126,7 @@ export default function RecurringCalendar({
   const quickViewId = `${id}-quick-view`;
   const reasonId = `${id}-hold-reason`;
   const [visibleWeek, setVisibleWeek] = useState(() => dateFromKey(initialWeekStartKey));
-  const [result, setResult] = useState<{ key: string; instances: CalendarInstance[]; error: string } | null>(null);
+  const [result, setResult] = useState<CalendarResult | null>(null);
   const [mutationError, setMutationError] = useState("");
   const [pendingAction, setPendingAction] = useState<"hold" | "delete" | null>(null);
   const [selectedInstance, setSelectedInstance] =
@@ -137,10 +146,18 @@ export default function RecurringCalendar({
   const startKey = dateKey(start);
   const endKey = dateKey(end);
   const weekLabel = WEEK_RANGE.formatRange(start, addDays(end, -1));
-  const requestKey = `${storeSlug}/${startKey}/${revision}`;
-  const loading = result?.key !== requestKey;
-  const instances = loading ? NO_INSTANCES : result.instances;
-  const error = loading ? "" : result.error;
+  const weekKey = `${storeSlug}/${startKey}`;
+  const requestKey = `${weekKey}/${revision}`;
+  // Only rows read for this store and week are ever shown. A refresh of the
+  // same week (a new revision) keeps them on screen until its reply arrives,
+  // so the grid doesn't blank and focused entries stay put.
+  const shown = result?.week === weekKey ? result : null;
+  const rows = shown?.instances ?? null;
+  const pending = shown?.key !== requestKey;
+  const loading = pending && !rows;
+  const refreshing = pending && !!rows;
+  const error = shown && !pending ? shown.error : "";
+  const instances = rows ?? NO_INSTANCES;
 
   // Counts for the current week's instances, per driver tab.
   const driverCounts = useMemo(() => {
@@ -176,10 +193,13 @@ export default function RecurringCalendar({
   }, [visibleInstances]);
 
   const heldCount = visibleInstances.filter((instance) => instance.isHeld).length;
-  const ready = !loading && !error;
+  // Rows to show, possibly from before a refresh still running or one that
+  // failed; holds are changed only from a fresh read.
+  const hasRows = rows !== null;
+  const ready = hasRows && !pending && !error;
   const busy = pendingAction !== null;
   const driverOptions = [{ id: ALL, name: "All drivers" }, ...drivers];
-  if ((ready && driverCounts[UNASSIGNED] > 0) || activeDriverFilter === UNASSIGNED) {
+  if ((hasRows && driverCounts[UNASSIGNED] > 0) || activeDriverFilter === UNASSIGNED) {
     driverOptions.push({ id: UNASSIGNED, name: "Unassigned" });
   }
 
@@ -204,18 +224,25 @@ export default function RecurringCalendar({
         }
         if (!Array.isArray(body.instances)) throw new Error("Failed to load recurring calendar");
         if (controller.signal.aborted) return;
-        const rows = body.instances;
-        setResult({ key: requestKey, instances: rows, error: "" });
-        setSelectedInstance((selected) => selected ? rows.find((row) => row.id === selected.id) ?? null : null);
+        const fresh = body.instances;
+        setResult({ week: weekKey, key: requestKey, instances: fresh, error: "" });
+        setSelectedInstance((selected) => selected ? fresh.find((row) => row.id === selected.id) ?? null : null);
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
-          setResult({ key: requestKey, instances: NO_INSTANCES, error: err instanceof Error ? err.message : "Failed to load recurring calendar" });
+          const message = err instanceof Error ? err.message : "Failed to load recurring calendar";
+          // A failed refresh keeps the week's last rows beside the error.
+          setResult((previous) => ({
+            week: weekKey,
+            key: requestKey,
+            instances: previous?.week === weekKey ? previous.instances : null,
+            error: message,
+          }));
         }
       });
 
     return () => controller.abort();
-  }, [endKey, requestKey, startKey, storeSlug]);
+  }, [endKey, requestKey, startKey, storeSlug, weekKey]);
 
   const showWeek = (week: Date) => {
     if (week.getTime() === start.getTime()) return;
@@ -223,7 +250,7 @@ export default function RecurringCalendar({
   };
 
   const toggleInstanceHold = async (instance: CalendarInstance) => {
-    if (instance.holdType === "TEMPLATE") return;
+    if (instance.holdType === "TEMPLATE" || busy || !ready) return;
 
     const holding = !instance.isHeld;
     const reason = holdReasonDraft.trim();
@@ -303,6 +330,11 @@ export default function RecurringCalendar({
     }
   };
 
+  // Every hold on the open delivery; the first is the one Resume acts on.
+  const selectedHolds = selectedInstance ? instanceHolds(selectedInstance) : [];
+  const holdBlocked =
+    busy || !ready || (!!selectedInstance && !selectedInstance.isHeld && !holdReasonDraft.trim());
+
   return (
     <section className={cn(card, styles.calendar)} aria-labelledby={headingId}>
       <header className={styles.header}>
@@ -347,7 +379,7 @@ export default function RecurringCalendar({
             <CalendarDriverTab
               key={driver.id}
               label={driver.name}
-              count={ready ? driverCounts[driver.id] : null}
+              count={hasRows ? driverCounts[driver.id] : null}
               active={activeDriverFilter === driver.id}
               onClick={() => setActiveDriverFilter(driver.id)}
             />
@@ -355,10 +387,11 @@ export default function RecurringCalendar({
         </div>
         <p className={styles.total} role="status">
           {loading && "Loading deliveries…"}
-          {ready && (
+          {hasRows && (
             <>
               {visibleInstances.length - heldCount} scheduled
               {heldCount > 0 && ` · ${heldCount} on hold`}
+              {refreshing && " · Updating…"}
             </>
           )}
         </p>
@@ -373,12 +406,12 @@ export default function RecurringCalendar({
         </div>
       )}
 
-      <ol className={styles.week} role="list" aria-label="Days of the week" aria-busy={loading} tabIndex={0}>
+      <ol className={styles.week} role="list" aria-label="Days of the week" aria-busy={pending} tabIndex={0}>
         {days.map((day) => {
           const key = dateKey(day);
-          const dayInstances = ready ? instancesByDate.get(key) ?? [] : [];
+          const dayInstances = hasRows ? instancesByDate.get(key) ?? [] : [];
           const today = key === todayKey;
-          const empty = ready && dayInstances.length === 0;
+          const empty = hasRows && dayInstances.length === 0;
 
           return (
             <li key={key} className={styles.day} data-today={today || undefined}>
@@ -436,7 +469,14 @@ export default function RecurringCalendar({
           );
         })}
       </ol>
-      <WeeklyHolds instances={instances} weekLabel={weekLabel} loading={loading} error={error} refresh={refreshCalendar} />
+      <WeeklyHolds
+        instances={rows}
+        weekLabel={weekLabel}
+        busy={pending}
+        error={error}
+        refresh={refreshCalendar}
+        covered={!!selectedInstance}
+      />
 
       <Modal
         open={!!selectedInstance}
@@ -486,11 +526,22 @@ export default function RecurringCalendar({
                   value={selectedInstance.generatedOrderStatus.replaceAll("_", " ")}
                 />
               )}
-              {selectedInstance.isHeld && selectedInstance.holdReason && (
-                <QuickViewRow
-                  label="Hold reason"
-                  value={selectedInstance.holdReason}
-                />
+              {selectedHolds.length > 0 && (
+                <div>
+                  <p className={quickViewLabel}>
+                    {selectedHolds.length === 1 ? "Hold reason" : "Hold reasons"}
+                  </p>
+                  <ul className="text-sm font-medium text-ink">
+                    {selectedHolds.map((hold) => {
+                      const note = holdNote(hold);
+                      return (
+                        <li key={hold.type} className="whitespace-pre-line">
+                          {HOLD_TYPE_LABELS[hold.type]}{note && `: ${note}`}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </div>
 
@@ -515,19 +566,33 @@ export default function RecurringCalendar({
                 {mutationError}
               </p>
             )}
+            {/* The page's own error sits behind this dialog, and holds wait
+                for a fresh read, so say why and offer the retry here too. */}
+            {!mutationError && error && (
+              <div role="alert" className={cn("mt-4 flex flex-wrap items-center justify-between gap-2 rounded-row p-3 text-sm", BANNER_CLASSES.error)}>
+                {error}
+                <button type="button" onClick={refreshCalendar} className={button("secondary", "sm")}>
+                  Retry
+                </button>
+              </div>
+            )}
 
             <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
               {selectedInstance.holdType !== "TEMPLATE" && (
                 <button
                   type="button"
-                  onClick={() => toggleInstanceHold(selectedInstance)}
-                  disabled={
-                    busy || !ready ||
-                    (!selectedInstance.isHeld && !holdReasonDraft.trim())
-                  }
-                  className={cn(button("secondary", "sm"), "justify-center")}
+                  onClick={() => {
+                    if (!holdBlocked) toggleInstanceHold(selectedInstance);
+                  }}
+                  // Not `disabled`: focus stays here through the save and the
+                  // refresh that follows it.
+                  aria-disabled={holdBlocked}
+                  className={cn(
+                    button("secondary", "sm"),
+                    "justify-center aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                  )}
                 >
-                  {pendingAction === "hold"
+                  {pendingAction === "hold" || refreshing
                     ? "Updating…"
                     : selectedInstance.holdType === "WEEK"
                     ? "Resume week"
@@ -552,10 +617,12 @@ export default function RecurringCalendar({
   );
 }
 
+const quickViewLabel = "text-label font-bold uppercase tracking-label text-muted";
+
 function QuickViewRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-label font-bold uppercase tracking-label text-muted">
+      <p className={quickViewLabel}>
         {label}
       </p>
       <p className="text-sm font-medium text-ink">{value}</p>

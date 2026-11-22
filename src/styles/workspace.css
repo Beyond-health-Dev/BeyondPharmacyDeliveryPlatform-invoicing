@@ -175,6 +175,7 @@
   }
 
   .workspace-icon-button {
+    position: relative;
     display: grid;
     width: 39px;
     height: 39px;
@@ -191,6 +192,13 @@
   .workspace-icon-button:hover {
     background: var(--workspace-accent-soft);
     color: var(--workspace-accent);
+  }
+
+  /* A 45px tap area around the 39px button, inside the topbar's gaps. */
+  .workspace-icon-button::after {
+    position: absolute;
+    inset: -3px;
+    content: "";
   }
 
   .workspace-menu-button {
@@ -589,6 +597,7 @@
   }
 
   .delivery-text-link {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: .35rem;
@@ -602,6 +611,30 @@
   .delivery-text-link:hover {
     text-decoration: underline;
     text-underline-offset: 3px;
+  }
+
+  /* A 44px-tall tap area centred on the link. The links sit in padding or
+     beside plain text, so it doesn't reach another control. */
+  .delivery-text-link::after {
+    position: absolute;
+    inset-inline: 0;
+    top: 50%;
+    height: max(100%, 44px);
+    translate: 0 -50%;
+    content: "";
+  }
+
+  /* The waiting-orders link has only its margin free above the search box,
+     so its tap area grows up into the heading's padding instead. */
+  .delivery-waiting-link {
+    margin: 0 1rem .5rem;
+  }
+
+  .delivery-waiting-link::after {
+    top: auto;
+    bottom: -7px;
+    height: 44px;
+    translate: none;
   }
 
   .delivery-toolbar {
@@ -869,6 +902,13 @@
     color: var(--workspace-accent);
   }
 
+  /* A 44px tap area around the 29px button, still inside its own item. */
+  .delivery-dismiss::after {
+    position: absolute;
+    inset: -7.5px;
+    content: "";
+  }
+
   @media (max-width: 1200px) {
     .delivery-panels {
       grid-template-columns: minmax(0, 1fr);
@@ -1028,6 +1068,30 @@
     .delivery-table .delivery-tracking { grid-area: tracking; text-align: end; }
     .delivery-table .delivery-actions { grid-area: actions; text-align: end; }
     .delivery-table .delivery-actions[data-external="false"] { visibility: hidden; }
+
+    /* A status note or failure reason makes the state tall. Let it run down
+       the right side, with tracking and actions under it, so the address and
+       driver stay right under the patient's name. */
+    .delivery-table tbody tr:has(.delivery-state > .delivery-status + *) {
+      grid-template:
+        "patient state" auto
+        "address state" auto
+        "driver state" 1fr
+        ". tracking" auto
+        ". actions" auto / minmax(0, 1fr) minmax(4rem, 42%);
+    }
+
+    /* Here the actions have a row of their own: drop it when it's empty, and
+       keep a tracking link's tap area off the buttons right under it. */
+    .delivery-table tbody tr:has(.delivery-state > .delivery-status + *) .delivery-actions[data-external="false"] {
+      display: none;
+    }
+
+    .delivery-table tbody tr:has(.delivery-state > .delivery-status + *) .delivery-tracking .delivery-text-link::after {
+      top: auto;
+      bottom: 0;
+      translate: none;
+    }
 
     .delivery-driver .delivery-cell-detail {
       display: inline;
