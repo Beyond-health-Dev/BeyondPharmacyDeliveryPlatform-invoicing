@@ -194,10 +194,11 @@
     color: var(--workspace-accent);
   }
 
-  /* A 45px tap area around the 39px button, inside the topbar's gaps. */
+  /* A 45px tap area around the 39px button, inside the topbar's gaps. The
+     inset counts from inside the 1px border (37px), so it is 4px, not 3px. */
   .workspace-icon-button::after {
     position: absolute;
-    inset: -3px;
+    inset: -4px;
     content: "";
   }
 

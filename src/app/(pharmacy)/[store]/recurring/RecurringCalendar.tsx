@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Modal from "@/components/ui/Modal";
@@ -16,6 +16,7 @@ import {
 import { BANNER_CLASSES } from "@/lib/statusTheme";
 import { vancouverWeekStartKey } from "@/lib/vancouverDate";
 import { holdNote, HOLD_TYPE_LABELS, instanceHolds, type WeeklyHoldInstance } from "@/lib/weeklyHolds";
+import RetryAlert from "./RetryAlert";
 import WeeklyHolds from "./WeeklyHolds";
 import styles from "@/styles/recurring-calendar.module.css";
 
@@ -133,6 +134,9 @@ export default function RecurringCalendar({
     useState<CalendarInstance | null>(null);
   const [holdReasonDraft, setHoldReasonDraft] = useState("");
   const [activeDriverFilter, setActiveDriverFilter] = useState<string>(ALL);
+  // Where focus goes when a Retry that had it succeeds and its alert goes.
+  const weekRef = useRef<HTMLOListElement>(null);
+  const quickViewRef = useRef<HTMLDivElement>(null);
 
   const { start, end } = useMemo(
     () => getCalendarRange(visibleWeek),
@@ -156,7 +160,10 @@ export default function RecurringCalendar({
   const pending = shown?.key !== requestKey;
   const loading = pending && !rows;
   const refreshing = pending && !!rows;
-  const error = shown && !pending ? shown.error : "";
+  // The last read of this week failed. Its message stays up while a retry
+  // runs, so the Retry button that started it keeps keyboard focus.
+  const error = shown?.error ?? "";
+  const retrying = pending && !!error;
   const instances = rows ?? NO_INSTANCES;
 
   // Counts for the current week's instances, per driver tab.
@@ -398,15 +405,19 @@ export default function RecurringCalendar({
       </div>
 
       {error && (
-        <div role="alert" className={cn(styles.loadError, BANNER_CLASSES.error)}>
-          {error}
-          <button type="button" onClick={refreshCalendar} className={button("secondary", "sm")}>
-            Retry
-          </button>
-        </div>
+        <RetryAlert
+          message={error}
+          retrying={retrying}
+          onRetry={refreshCalendar}
+          // The quick view repeats this error and announces it itself.
+          announce={!selectedInstance}
+          restoreFocusTo={() => weekRef.current}
+          className={cn(styles.loadError, BANNER_CLASSES.error)}
+          buttonClassName={retryButton}
+        />
       )}
 
-      <ol className={styles.week} role="list" aria-label="Days of the week" aria-busy={pending} tabIndex={0}>
+      <ol ref={weekRef} className={styles.week} role="list" aria-label="Days of the week" aria-busy={pending} tabIndex={0}>
         {days.map((day) => {
           const key = dateKey(day);
           const dayInstances = hasRows ? instancesByDate.get(key) ?? [] : [];
@@ -486,7 +497,7 @@ export default function RecurringCalendar({
         labelledBy={quickViewId}
       >
         {selectedInstance && (
-          <div className="overflow-y-auto px-5 pb-5 pt-2 sm:pt-5">
+          <div ref={quickViewRef} className="overflow-y-auto px-5 pb-5 pt-2 sm:pt-5">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <h3 id={quickViewId} className={sectionTitle}>
@@ -569,12 +580,14 @@ export default function RecurringCalendar({
             {/* The page's own error sits behind this dialog, and holds wait
                 for a fresh read, so say why and offer the retry here too. */}
             {!mutationError && error && (
-              <div role="alert" className={cn("mt-4 flex flex-wrap items-center justify-between gap-2 rounded-row p-3 text-sm", BANNER_CLASSES.error)}>
-                {error}
-                <button type="button" onClick={refreshCalendar} className={button("secondary", "sm")}>
-                  Retry
-                </button>
-              </div>
+              <RetryAlert
+                message={error}
+                retrying={retrying}
+                onRetry={refreshCalendar}
+                restoreFocusTo={() => quickViewRef.current?.closest<HTMLElement>('[role="dialog"]')}
+                className={cn("mt-4 flex flex-wrap items-center justify-between gap-2 rounded-row p-3 text-sm", BANNER_CLASSES.error)}
+                buttonClassName={retryButton}
+              />
             )}
 
             <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -618,6 +631,7 @@ export default function RecurringCalendar({
 }
 
 const quickViewLabel = "text-label font-bold uppercase tracking-label text-muted";
+const retryButton = cn(button("secondary", "sm"), "aria-disabled:cursor-not-allowed aria-disabled:opacity-50");
 
 function QuickViewRow({ label, value }: { label: string; value: string }) {
   return (

@@ -79,13 +79,17 @@ function uniqueError(target: string) {
   });
 }
 
-// As Prisma does, an undefined field leaves the column unchanged.
 function stored(data: Record<string, unknown>) {
   return Object.fromEntries(
-    Object.entries(data)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => [key, value === Prisma.JsonNull ? null : value])
+    Object.entries(data).map(([key, value]) => [key, value === Prisma.JsonNull ? null : value])
   );
+}
+
+// As Prisma does, an undefined field in an update leaves the column unchanged.
+// A create keeps its undefined fields instead, so a required one the code left
+// out stays missing rather than taking addRow's fixture default.
+function changes(data: Record<string, unknown>) {
+  return stored(Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined)));
 }
 
 function shape(row: ExternalDispatch, args: { select?: Record<string, boolean>; include?: Record<string, unknown> }) {
@@ -137,7 +141,7 @@ export const impl = {
     ) {
       throw uniqueError("spokeStopId");
     }
-    for (const row of hits) Object.assign(row, stored(data), { updatedAt: new Date() });
+    for (const row of hits) Object.assign(row, changes(data), { updatedAt: new Date() });
     return { count: hits.length };
   },
 };

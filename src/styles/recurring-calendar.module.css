@@ -287,6 +287,7 @@
 .holdsTab:hover, .holdsClose:hover { background-color: var(--workspace-surface, var(--blue)); }
 .holdsChevron { color: var(--calendar-muted); }
 .holdsDock:has(:popover-open) .holdsChevron { transform: rotate(180deg); }
+.holdsTab[aria-expanded="true"] .holdsChevron { transform: rotate(180deg); }
 .holdsBadge {
   min-width: 1.4rem;
   padding: .12rem .35rem;
@@ -298,7 +299,10 @@
 }
 .holdsTab[data-active] .holdsBadge { background: var(--blush); color: #83323b; }
 
+/* Hidden unless open. A browser without popovers drops every rule with
+   :popover-open in it, so the panel it shows (data-open) has rules of its own. */
 .holdsPanel {
+  display: none;
   position: fixed;
   inset: auto var(--dock-inset) calc(var(--dock-inset) + 3.2rem) auto;
   margin: 0;
@@ -313,6 +317,7 @@
   box-shadow: 0 8px 24px rgb(24 41 73 / 14%);
 }
 .holdsPanel:popover-open { display: flex; flex-direction: column; }
+.holdsPanel[data-open] { display: flex; flex-direction: column; }
 .holdsHeader {
   display: flex;
   align-items: flex-start;
@@ -339,8 +344,12 @@
 .holdDetail p + p { margin-top: .1rem; white-space: pre-line; font-size: .865rem; line-height: 1.4; }
 .holdsMessage { padding: 1.05rem; color: var(--calendar-muted); font-size: .875rem; }
 .holdsMessage button { color: var(--calendar-ink); text-decoration: underline; cursor: pointer; }
+.holdsMessage button[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
 .holdsDock :focus-visible { outline: 2px solid var(--navy); outline-offset: -2px; }
-@media print { .holdsDock, .holdsPanel:popover-open { display: none; } }
+@media print {
+  .holdsDock { display: none; }
+  .holdsPanel:popover-open { display: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .weekButton,
