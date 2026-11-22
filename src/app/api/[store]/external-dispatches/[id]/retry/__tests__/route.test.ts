@@ -77,20 +77,21 @@ describe("POST /api/[store]/external-dispatches/[id]/retry", () => {
     expect(mocks.createStop).not.toHaveBeenCalled();
   });
 
-  it.each(["CANCEL_CLEANUP_FAILED", "CANCELLED_BUT_ACTIVE"])(
-    "says a cancelled order may still be in Anchor's list (%s)",
-    async (workflowStep) => {
-      const cancelled = table.addRow({ status: "CANCELLED", workflowStep });
+  it.each([
+    [
+      "CANCEL_CLEANUP_FAILED",
+      "This order was cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it.",
+    ],
+    ["CANCELLED_BUT_ACTIVE", "This order was cancelled, but Anchor has started on it. Contact Anchor so it isn't delivered."],
+  ])("says what to do about a cancelled order Anchor may still have (%s)", async (workflowStep, message) => {
+    const cancelled = table.addRow({ status: "CANCELLED", workflowStep });
 
-      const { status, body } = await retry(cancelled.id);
+    const { status, body } = await retry(cancelled.id);
 
-      expect(status).toBe(409);
-      expect(body.error).toBe(
-        "This order was cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it."
-      );
-      expect(mocks.createStop).not.toHaveBeenCalled();
-    }
-  );
+    expect(status).toBe(409);
+    expect(body.error).toBe(message);
+    expect(mocks.createStop).not.toHaveBeenCalled();
+  });
 
   it("says plainly that only an order that didn't reach Anchor can be sent again", async () => {
     const sent = table.addRow({ status: "SUBMITTED", spokeStopId: STOP });

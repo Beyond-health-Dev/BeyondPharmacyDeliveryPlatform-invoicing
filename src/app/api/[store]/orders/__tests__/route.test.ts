@@ -138,6 +138,48 @@ describe("POST /api/[store]/orders, Anchor order saved again with the same reque
     expect(mocks.deleteStop).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [
+      "CANCEL_CLEANUP_FAILED",
+      "This order was already saved for Sun, Nov 22 and then cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it, then save it again.",
+    ],
+    [
+      "CANCELLED_BUT_ACTIVE",
+      "This order was already saved for Sun, Nov 22 and then cancelled, but Anchor has started on it. Contact Anchor so it isn't delivered, then save it again.",
+    ],
+  ])("answers 409 without inviting a new order when the cancelled one may still be with Anchor (%s)", async (workflowStep, error) => {
+    const cancelled = table.addRow({
+      idempotencyKey: KEY,
+      status: "CANCELLED",
+      workflowStep,
+      scheduledDate: new Date("2026-11-22T00:00:00.000Z"),
+    });
+    const before = { ...cancelled };
+
+    const { status, body } = await save("2026-11-22");
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ error, external: true });
+    expect(table.rows).toEqual([before]);
+    expect(mocks.createStop).not.toHaveBeenCalled();
+  });
+
+  it("says the order may still be in Anchor's list when it is cancelled while this save sends it and the stop can't be removed", async () => {
+    mocks.createStop.mockImplementation(async () => {
+      Object.assign(table.rows[0], { status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
+      return { stopId: "unassignedStops/u1", pending: false, requestPayload: {}, responsePayload: {} };
+    });
+    mocks.deleteStop.mockRejectedValue(new Error("Spoke is down"));
+
+    const { status, body } = await save("2026-11-22");
+
+    expect(status).toBe(409);
+    expect(body.error).toBe(
+      "This order was already saved for Sun, Nov 22 and then cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it, then save it again."
+    );
+    expect(table.rows[0]).toMatchObject({ status: "CANCELLED", workflowStep: "CANCEL_CLEANUP_FAILED" });
+  });
+
   it("answers 201 for a new same-day order sent to Anchor", async () => {
     const { status, body } = await save("2026-11-22");
 

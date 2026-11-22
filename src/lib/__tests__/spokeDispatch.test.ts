@@ -458,6 +458,22 @@ describe("a failed Spoke call after the order moved on", () => {
     }
   );
 
+  it("still alerts staff, without throwing, when the cancel can't be flagged", async () => {
+    cancelledDuringCall(failed(null));
+    table.externalDispatch.updateMany.mockImplementation(async (args) => {
+      if (args.data.workflowStep === "CANCEL_CLEANUP_FAILED") throw new Error("database is busy");
+      return table.impl.updateMany(args);
+    });
+
+    const result = await dispatchOrderToSpoke(sendInput());
+
+    expect(result).toMatchObject({ alreadyDispatched: true, dispatch: { status: "CANCELLED" } });
+    expect(byKey()).toMatchObject({ status: "CANCELLED", workflowStep: "CANCEL_UNASSIGNED_STOP" });
+    expect(table.notifications).toHaveLength(1);
+    expect(table.notifications[0]).toMatchObject({ type: "SPOKE_CANCEL_INCOMPLETE", storeId: table.STORE.id });
+    expect(table.notifications[0].message).toContain("Remove it in Spoke");
+  });
+
   it.each([400, 401, 403, 404, 422, 429])(
     "keeps a cancel quietly when Spoke refused the stop (%s)",
     async (upstreamStatus) => {
@@ -643,6 +659,22 @@ describe("scheduleDeferredSpokeDispatch", () => {
       expect(table.row(existing.id)).toEqual(before);
     }
   );
+
+  it.each([
+    ["CANCEL_CLEANUP_FAILED", "but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it, then save it again."],
+    ["CANCELLED_BUT_ACTIVE", "but Anchor has started on it. Contact Anchor so it isn't delivered, then save it again."],
+  ])("refuses a replay onto a cancelled row Anchor may still have (%s), saying to sort that out first", async (workflowStep, ending) => {
+    table.addRow({ idempotencyKey: KEY, status: "CANCELLED", workflowStep });
+
+    const err = await scheduleDeferredSpokeDispatch(sendInput()).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SpokeDispatchError);
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toMatch(/^This order was already saved for Mon, Nov 23 and then cancelled, /);
+    expect(err.message.endsWith(ending)).toBe(true);
+    expect(err.message).not.toContain("make a new order");
+    expect(table.writeCount()).toBe(0);
+  });
 
   it("refuses a save for tomorrow whose same-day send failed, so it isn't taken as held", async () => {
     // Saved for today, the send failed (or was cut short), then staff moved

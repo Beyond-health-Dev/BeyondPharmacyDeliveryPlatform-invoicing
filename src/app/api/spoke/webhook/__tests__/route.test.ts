@@ -14,6 +14,7 @@ vi.mock("@/lib/spoke", async (importOriginal) => ({
   deleteSpokeUnassignedStop: spoke.deleteStop,
 }));
 
+import { externalDispatchRowView } from "@/lib/externalDispatchStatus";
 import { SpokeDispatchError } from "@/lib/spoke";
 import { dispatchOrderToSpoke } from "@/lib/spokeDispatch";
 import { POST } from "../route";
@@ -210,7 +211,7 @@ describe("Spoke webhook for an order cancelled here", () => {
           throw new SpokeDispatchError("Spoke CREATE_UNASSIGNED_STOP request timed out.", 502, null, "CREATE_UNASSIGNED_STOP", null);
         },
       ],
-    ])("doesn't alert again when the sender %s and Anchor then reports the order", async (_label, answer) => {
+    ])("tells staff to contact Anchor, once, when the sender %s and Anchor then starts on it", async (_label, answer) => {
       const waiting = table.addRow({ idempotencyKey: "order-1", status: "SCHEDULED" });
       spoke.createStop.mockImplementation(async () => {
         cancelHere(waiting.id);
@@ -221,15 +222,50 @@ describe("Spoke webhook for an order cancelled here", () => {
       await send(waiting);
       expect(table.row(waiting.id).workflowStep).toBe("CANCEL_CLEANUP_FAILED");
       expect(table.notifications).toHaveLength(1);
+      expect(table.notifications[0].message).toMatch(/Remove it in Spoke/);
 
       await post(event("stop.allocated"));
 
-      expect(table.row(waiting.id)).toMatchObject({
+      const row = table.row(waiting.id);
+      expect(row).toMatchObject({
         status: "CANCELLED",
         workflowStep: "CANCELLED_BUT_ACTIVE",
         lastWebhookEventType: "stop.allocated",
       });
+      expect(table.notifications).toHaveLength(2);
+      expect(table.notifications[1]).toEqual({
+        type: "SPOKE_CANCEL_INCOMPLETE",
+        message:
+          "Anchor has started handling an order that was cancelled here (Riley Chen, 7380 120 St, Surrey). Contact Anchor so it isn't delivered.",
+        storeId: table.STORE.id,
+      });
+      expect(externalDispatchRowView(row, { todayKey: "2026-11-22", vancouverHour: 11 }).statusNote).toBe(
+        "Cancelled here, but Anchor has started on it. Contact Anchor so it isn't delivered."
+      );
+
+      await post(event("stop.out_for_delivery"));
+
+      expect(table.notifications).toHaveLength(2);
+      expect(table.row(waiting.id)).toMatchObject({
+        status: "CANCELLED",
+        workflowStep: "CANCELLED_BUT_ACTIVE",
+        lastWebhookEventType: "stop.out_for_delivery",
+      });
+    });
+
+    it("tells staff to contact Anchor once when two of Anchor's events arrive together", async () => {
+      const left = table.addRow({
+        idempotencyKey: "order-1",
+        status: "CANCELLED",
+        workflowStep: "CANCEL_CLEANUP_FAILED",
+        spokeStopId: STOP,
+      });
+
+      await Promise.all([post(event("stop.allocated")), post(event("stop.out_for_delivery"))]);
+
+      expect(table.row(left.id)).toMatchObject({ status: "CANCELLED", workflowStep: "CANCELLED_BUT_ACTIVE", spokeStopId: STOP });
       expect(table.notifications).toHaveLength(1);
+      expect(table.notifications[0].message).toMatch(/Contact Anchor so it isn't delivered\.$/);
     });
 
     it("doesn't alert again when Anchor reports the order during the send and the stop then can't be removed", async () => {

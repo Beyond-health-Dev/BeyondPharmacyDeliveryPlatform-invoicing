@@ -47,13 +47,15 @@ export const CANCEL_CLEANUP_FAILED_STEP = "CANCEL_CLEANUP_FAILED";
 
 // workflowStep on a CANCELLED row that Anchor went on to allocate, route or
 // deliver anyway (its webhook says so). Staff were alerted to contact Anchor.
-// Nothing else overwrites it; a CANCEL_CLEANUP_FAILED row moves on to it.
+// Nothing else overwrites it; a CANCEL_CLEANUP_FAILED row moves on to it, with
+// a second alert (removing it in Spoke no longer works).
 export const CANCELLED_BUT_ACTIVE_STEP = "CANCELLED_BUT_ACTIVE";
 
 // Rows no "cancelled but may still be with Anchor" alert has been raised for
 // yet. Every path that raises one sets either marker above in the same
-// statement as this check, so an order gets one alert. workflowStep is
-// nullable, and Prisma's notIn leaves NULL rows out, hence the OR.
+// statement as this check, so an order gets one alert of each kind.
+// workflowStep is nullable, and Prisma's notIn leaves NULL rows out, hence
+// the OR.
 export const CANCEL_ALERT_NOT_RAISED = {
   OR: [
     { workflowStep: null },
@@ -71,6 +73,14 @@ export function mayStillBeWithAnchorAfterCancel(dispatch: {
     (dispatch.workflowStep === CANCEL_CLEANUP_FAILED_STEP ||
       dispatch.workflowStep === CANCELLED_BUT_ACTIVE_STEP)
   );
+}
+
+// For such an order: why, and what staff do about it. Once Anchor has started
+// on it, it can't be removed in Spoke, so staff contact Anchor.
+export function stillWithAnchorAfterCancel(workflowStep?: string | null) {
+  return workflowStep === CANCELLED_BUT_ACTIVE_STEP
+    ? { why: "Anchor has started on it", fix: "Contact Anchor so it isn't delivered" }
+    : { why: "it may still be in Anchor's list", fix: "Remove it in Spoke so Anchor doesn't deliver it" };
 }
 
 const SENDABLE = new Set(SENDABLE_EXTERNAL_STATUSES);
@@ -164,7 +174,9 @@ export function externalStatusNote(clock: StatusClock): string | null {
     return `Goes to Anchor about 6 AM ${describeDeliveryDayFrom(scheduledDateKey, todayKey)}`;
   }
   if (mayStillBeWithAnchorAfterCancel(clock)) {
-    return "Cancelled here, but Anchor may still have it. Remove it in Spoke.";
+    return clock.workflowStep === CANCELLED_BUT_ACTIVE_STEP
+      ? "Cancelled here, but Anchor has started on it. Contact Anchor so it isn't delivered."
+      : "Cancelled here, but Anchor may still have it. Remove it in Spoke.";
   }
   // With a stop id, Anchor has the stop; saving the send here didn't finish.
   if (status === "DISPATCH_FAILED") {
@@ -294,9 +306,17 @@ function savedOrderOutcome(status: string) {
 // The order form saved this order before (same request) for another day, or
 // the earlier save can't simply be returned. Nothing is changed; staff sort
 // out the earlier one first. The form then starts a new request, so saving
-// again makes a new order.
-export function alreadySavedMessage(dispatch: { status: string; scheduledDateKey: string }, todayKey: string) {
+// again makes a new order. A cancelled one Anchor may still have is sorted out
+// with Anchor before that.
+export function alreadySavedMessage(
+  dispatch: { status: string; scheduledDateKey: string; workflowStep?: string | null },
+  todayKey: string
+) {
   const day = shortDayLabel(dispatch.scheduledDateKey, todayKey);
+  if (mayStillBeWithAnchorAfterCancel(dispatch)) {
+    const { why, fix } = stillWithAnchorAfterCancel(dispatch.workflowStep);
+    return `This order was already saved for ${day} and then cancelled, but ${why}. ${fix}, then save it again.`;
+  }
   if (dispatch.status === "CANCELLED") {
     return `This order was already saved for ${day} and then cancelled. Save it again to make a new order.`;
   }

@@ -150,8 +150,9 @@ export async function POST(req: NextRequest) {
       // after Spoke made the stop, or a stop that had moved onto a route
       // when the cancel removed it. It stays cancelled (and its stop id is
       // left alone: it is unique), but the event is kept and staff are told
-      // once per order, counting the sender's alert for a stop it couldn't
-      // remove.
+      // once per order to contact Anchor. A stop the sender couldn't remove
+      // (staff were told to remove it in Spoke) gets this alert once too,
+      // since that no longer works.
       if (isTrackingOnly || !ANCHOR_ACTIVE_STATUSES.has(mapped.status)) {
         return NextResponse.json({ ok: true, matched: 0, ignored: true });
       }
@@ -164,17 +165,20 @@ export async function POST(req: NextRequest) {
         data: { ...eventData, workflowStep: CANCELLED_BUT_ACTIVE_STEP },
       });
       if (flagged.count === 0) {
-        // Already alerted: a stop the sender couldn't remove is now one
-        // Anchor is handling, with no second alert.
-        await prisma.externalDispatch.updateMany({
+        // Already alerted. A stop the sender couldn't remove is now one
+        // Anchor is handling: staff are told again, to contact Anchor. The
+        // write is guarded on the old marker, so that happens once.
+        const moved = await prisma.externalDispatch.updateMany({
           where: { id: dispatch.id, status: "CANCELLED", workflowStep: CANCEL_CLEANUP_FAILED_STEP },
-          data: { workflowStep: CANCELLED_BUT_ACTIVE_STEP },
+          data: { ...eventData, workflowStep: CANCELLED_BUT_ACTIVE_STEP },
         });
-        await prisma.externalDispatch.updateMany({
-          where: { id: dispatch.id, status: "CANCELLED" },
-          data: eventData,
-        });
-        return NextResponse.json({ ok: true, matched: 1, cancelledHere: true });
+        if (moved.count === 0) {
+          await prisma.externalDispatch.updateMany({
+            where: { id: dispatch.id, status: "CANCELLED" },
+            data: eventData,
+          });
+          return NextResponse.json({ ok: true, matched: 1, cancelledHere: true });
+        }
       }
       try {
         await prisma.notification.create({

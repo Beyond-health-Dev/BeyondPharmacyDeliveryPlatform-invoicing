@@ -6,6 +6,8 @@ import {
   CANCELLABLE_EXTERNAL_STATUSES,
   IN_FLIGHT_STEP,
   isCancellableExternalStatus,
+  mayStillBeWithAnchorAfterCancel,
+  stillWithAnchorAfterCancel,
 } from "@/lib/externalDispatchStatus";
 import { deleteSpokeUnassignedStop, getSpokeConfig, SpokeDispatchError } from "@/lib/spoke";
 import { resolveStore } from "@/lib/store";
@@ -15,6 +17,16 @@ const ALREADY_CANCELLED = "Already cancelled.";
 function asPrismaJson(value: unknown) {
   if (value === undefined || value === null) return Prisma.JsonNull;
   return value as Prisma.InputJsonValue;
+}
+
+// Already cancelled here. If Anchor may still have it, say what to do (the
+// screen keeps that up until staff dismiss it).
+function alreadyCancelled(dispatch: ExternalDispatch) {
+  if (!mayStillBeWithAnchorAfterCancel(dispatch)) {
+    return NextResponse.json({ message: ALREADY_CANCELLED, dispatch });
+  }
+  const { why, fix } = stillWithAnchorAfterCancel(dispatch.workflowStep);
+  return NextResponse.json({ message: `Already cancelled, but ${why}. ${fix}.`, needsCheck: true, dispatch });
 }
 
 // Records the cancel after the stop is gone at Spoke, unless Anchor's update
@@ -35,7 +47,7 @@ async function recordCancelAfterSpoke(dispatch: ExternalDispatch, message: strin
     return NextResponse.json({ message, dispatch: latest });
   }
   if (latest.status === "CANCELLED") {
-    return NextResponse.json({ message: ALREADY_CANCELLED, dispatch: latest });
+    return alreadyCancelled(latest);
   }
   return NextResponse.json(
     {
@@ -78,7 +90,7 @@ export async function DELETE(
     }
 
     if (dispatch.status === "CANCELLED") {
-      return NextResponse.json({ message: ALREADY_CANCELLED, dispatch });
+      return alreadyCancelled(dispatch);
     }
 
     if (!isCancellableExternalStatus(dispatch.status)) {

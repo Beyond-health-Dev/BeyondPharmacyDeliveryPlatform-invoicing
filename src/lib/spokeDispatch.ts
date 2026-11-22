@@ -144,7 +144,7 @@ function dateKeyOf(dispatch: Pick<ExternalDispatch, "scheduledDate">) {
 export function alreadySavedConflict(dispatch: ExternalDispatch) {
   return new SpokeDispatchError(
     alreadySavedMessage(
-      { status: dispatch.status, scheduledDateKey: dateKeyOf(dispatch) },
+      { status: dispatch.status, scheduledDateKey: dateKeyOf(dispatch), workflowStep: dispatch.workflowStep },
       vancouverTodayKey()
     ),
     409,
@@ -519,17 +519,20 @@ export async function dispatchOrderToSpoke(
 
 // Cancelled during a create-stop call that failed in a way that may still
 // have made the stop at Spoke. Nobody knows its id, so staff remove it in
-// Spoke themselves. Never throws; returns the row as flagged.
+// Spoke themselves (once per order; if the row can't be flagged, they are
+// told anyway). Never throws; returns the row as flagged.
 async function flagCancelledStopMayExist(dispatch: ExternalDispatch): Promise<ExternalDispatch> {
+  let alert = true;
   try {
     const flagged = await prisma.externalDispatch.updateMany({
       where: { id: dispatch.id, status: "CANCELLED", ...CANCEL_ALERT_NOT_RAISED },
       data: { workflowStep: CANCEL_CLEANUP_FAILED_STEP },
     });
-    if (flagged.count > 0) await alertCancelIncomplete(dispatch);
+    alert = flagged.count > 0;
   } catch (err) {
     console.error(`[SPOKE] Failed to flag cancelled order ${dispatch.id}:`, err);
   }
+  if (alert) await alertCancelIncomplete(dispatch);
   return reread(dispatch);
 }
 

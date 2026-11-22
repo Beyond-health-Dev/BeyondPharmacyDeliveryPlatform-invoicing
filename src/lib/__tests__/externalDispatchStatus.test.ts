@@ -231,23 +231,23 @@ describe("externalDispatchRowView (an Anchor row on Orders and the dashboard)", 
     ).toMatchObject({ needsAttention: true, statusNote: expect.stringMatching(/^Missed the 6 AM send/) });
   });
 
-  it.each(["CANCEL_CLEANUP_FAILED", "CANCELLED_BUT_ACTIVE"])(
-    "flags a cancelled order Anchor may still have (%s) and says to remove it in Spoke",
-    (workflowStep) => {
-      expect(
-        externalDispatchRowView(
-          { status: "CANCELLED", spokeStopId: "unassignedStops/u1", workflowStep, scheduledDate: midnight("2026-11-22") },
-          clock
-        )
-      ).toEqual({
-        canCancelExternal: false,
-        hasAnchorStop: true,
-        statusLabel: "CANCELLED",
-        statusNote: "Cancelled here, but Anchor may still have it. Remove it in Spoke.",
-        needsAttention: true,
-      });
-    }
-  );
+  it.each([
+    ["CANCEL_CLEANUP_FAILED", "Cancelled here, but Anchor may still have it. Remove it in Spoke."],
+    ["CANCELLED_BUT_ACTIVE", "Cancelled here, but Anchor has started on it. Contact Anchor so it isn't delivered."],
+  ])("flags a cancelled order Anchor may still have (%s) and says what to do", (workflowStep, statusNote) => {
+    expect(
+      externalDispatchRowView(
+        { status: "CANCELLED", spokeStopId: "unassignedStops/u1", workflowStep, scheduledDate: midnight("2026-11-22") },
+        clock
+      )
+    ).toEqual({
+      canCancelExternal: false,
+      hasAnchorStop: true,
+      statusLabel: "CANCELLED",
+      statusNote,
+      needsAttention: true,
+    });
+  });
 
   it("leaves a cleanly cancelled order plain", () => {
     for (const workflowStep of ["CANCEL_UNASSIGNED_STOP", null]) {
@@ -335,6 +335,24 @@ describe("alreadySavedMessage (same request saved before)", () => {
   it("tells staff to just save again when the earlier one was cancelled", () => {
     expect(alreadySavedMessage({ status: "CANCELLED", scheduledDateKey: "2026-11-23" }, "2026-11-22")).toBe(
       "This order was already saved for Mon, Nov 23 and then cancelled. Save it again to make a new order."
+    );
+    expect(
+      alreadySavedMessage({ status: "CANCELLED", scheduledDateKey: "2026-11-23", workflowStep: "CANCEL_UNASSIGNED_STOP" }, "2026-11-22")
+    ).toBe("This order was already saved for Mon, Nov 23 and then cancelled. Save it again to make a new order.");
+  });
+
+  it.each([
+    [
+      "CANCEL_CLEANUP_FAILED",
+      "This order was already saved for Mon, Nov 23 and then cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it, then save it again.",
+    ],
+    [
+      "CANCELLED_BUT_ACTIVE",
+      "This order was already saved for Mon, Nov 23 and then cancelled, but Anchor has started on it. Contact Anchor so it isn't delivered, then save it again.",
+    ],
+  ])("has staff sort out a cancelled one Anchor may still have (%s) before saving again", (workflowStep, message) => {
+    expect(alreadySavedMessage({ status: "CANCELLED", scheduledDateKey: "2026-11-23", workflowStep }, "2026-11-22")).toBe(
+      message
     );
   });
 });

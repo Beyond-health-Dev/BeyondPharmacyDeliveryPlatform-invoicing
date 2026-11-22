@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { mayStillBeWithAnchorAfterCancel } from "@/lib/externalDispatchStatus";
+import { mayStillBeWithAnchorAfterCancel, stillWithAnchorAfterCancel } from "@/lib/externalDispatchStatus";
 import { SpokeDispatchError } from "@/lib/spoke";
 import { dispatchOrderToSpoke } from "@/lib/spokeDispatch";
 import { resolveStore } from "@/lib/store";
@@ -9,12 +9,14 @@ import { resolveStore } from "@/lib/store";
 // A retry can spend up to ~50s in Spoke's retry/backoff cycle.
 export const maxDuration = 60;
 
-// A cancelled order isn't sent again. If its stop may still be in Anchor's
-// list (the cleanup failed, or Anchor took it anyway), say so.
+// A cancelled order isn't sent again. If Anchor may still have it (the
+// cleanup failed, or Anchor has started on it anyway), say what to do.
 function cancelledMessage(dispatch: { status: string; workflowStep: string | null }) {
-  return mayStillBeWithAnchorAfterCancel(dispatch)
-    ? "This order was cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it."
-    : "This order was cancelled, so it won't be sent to Anchor.";
+  if (!mayStillBeWithAnchorAfterCancel(dispatch)) {
+    return "This order was cancelled, so it won't be sent to Anchor.";
+  }
+  const { why, fix } = stillWithAnchorAfterCancel(dispatch.workflowStep);
+  return `This order was cancelled, but ${why}. ${fix}.`;
 }
 
 // Safe resume for a failed Spoke handoff: replays dispatchOrderToSpoke with the

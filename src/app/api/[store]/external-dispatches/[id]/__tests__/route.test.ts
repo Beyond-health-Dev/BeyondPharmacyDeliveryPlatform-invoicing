@@ -208,6 +208,23 @@ describe("orders that can't be cancelled here", () => {
     expect(body.message).toBe("Already cancelled.");
     expect(table.writeCount()).toBe(0);
   });
+
+  it.each([
+    [
+      "CANCEL_CLEANUP_FAILED",
+      "Already cancelled, but it may still be in Anchor's list. Remove it in Spoke so Anchor doesn't deliver it.",
+    ],
+    ["CANCELLED_BUT_ACTIVE", "Already cancelled, but Anchor has started on it. Contact Anchor so it isn't delivered."],
+  ])("says what to do about an already cancelled order Anchor may still have (%s)", async (workflowStep, message) => {
+    const cancelled = table.addRow({ status: "CANCELLED", workflowStep });
+
+    const { status, body } = await cancel(cancelled.id);
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ message, needsCheck: true });
+    expect(table.writeCount()).toBe(0);
+    expect(mocks.deleteStop).not.toHaveBeenCalled();
+  });
 });
 
 describe("a cancel racing the sender or Anchor", () => {
