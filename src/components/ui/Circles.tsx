@@ -11,10 +11,14 @@ const VARIANTS = {
   hero: ["circle--blush circle--hero-tl", "circle--mint circle--hero-br"],
   // Page header row: blush top-left + mint top-right.
   pageHeader: ["circle--blush circle--hero-tl", "circle--mint circle--header-tr"],
+  // Pharmacy workspace backdrop: three large or medium circles, three small.
   workspace: [
     "circle--blue circle--workspace-blue",
     "circle--mint circle--workspace-mint",
     "circle--blush circle--workspace-blush",
+    "circle--butter circle--workspace-butter",
+    "circle--lilac circle--workspace-lilac",
+    "circle--mint circle--workspace-mint-small",
   ],
   // Alternates for following sections, so colours vary down the page.
   section2: ["circle--blue circle--s2-tl"],
