@@ -15,7 +15,7 @@ import type { DeliveryDetailOrder } from "@/app/(driver)/[store]/deliver/[id]/De
 import type { EarningsDelivery } from "@/app/(driver)/[store]/earnings/EarningsView";
 import type { ZoneHistory } from "@/lib/zoneSuggestion";
 import { externalDispatchRowView } from "@/lib/externalDispatchStatus";
-import { vancouverTodayKey, vancouverWeekStartKey } from "@/lib/vancouverDate";
+import { addDaysToDateKey, vancouverTodayKey, vancouverWeekStartKey } from "@/lib/vancouverDate";
 
 // Links and API calls inside fixture screens use this slug; the dev fetch
 // stub answers every /api/<slug>/... call.
@@ -188,8 +188,8 @@ export const recurringOrders: RecurringItem[] = [
   // Staff put these labels on both delivery days' sheets instead of Daily.
   profile({ id: "r2", patientName: "Jordan Kaur", deliveryAddress: "6620 King George Blvd", assignedDriverId: "d_anchor", assignedDriverName: "Anchor", activeDays: [2, 4], labelSheets: ["tuesday", "thursday"] }),
   profile({ id: "r3", patientName: "Riley Chen", deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", deliveryZoneId: "z_langley", zoneName: "Langley", recurrenceIntervalWeeks: 2 }),
-  profile({ id: "r4", patientName: "Morgan Patel", deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", deliveryZoneId: "z_whiterock", zoneName: "White Rock", isOnHold: true, holdStart: "2026-10-05T00:00:00.000Z", holdEnd: "2026-10-19T00:00:00.000Z" }),
-  profile({ id: "r5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", deliveryZoneId: "z_coquitlam", zoneName: "Coquitlam", zonePrice: 5.25, assignedDriverId: null, assignedDriverName: null, isSkippedThisWeek: true }),
+  profile({ id: "r4", patientName: "Morgan Patel", deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", deliveryZoneId: "z_whiterock", zoneName: "White Rock", isOnHold: true, activeDays: [3], assignedDriverId: "d_priya", assignedDriverName: "Priya Bains", holdStart: `${vancouverWeekStartKey()}T00:00:00.000Z`, holdEnd: `${addDaysToDateKey(vancouverWeekStartKey(), 6)}T00:00:00.000Z` }),
+  profile({ id: "r5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", deliveryZoneId: "z_coquitlam", zoneName: "Coquitlam", zonePrice: 5.25, assignedDriverId: null, assignedDriverName: null, activeDays: [2, 5], isSkippedThisWeek: true }),
   // Once-a-week profiles, for the per-weekday label sheets.
   profile({ id: "r6", patientName: "Sam Gill", deliveryAddress: "7380 120 St", deliveryCity: "Delta", activeDays: [1], heldDaysThisWeek: 1 }),
   profile({ id: "r7", patientName: "Taylor Dhillon", deliveryAddress: "10153 King George Blvd", activeDays: [2], isOnHold: true, holdUpcoming: true, holdStart: `${day(9)}T00:00:00.000Z`, holdEnd: `${day(16)}T00:00:00.000Z` }),
@@ -297,48 +297,3 @@ export const savedAddresses: Record<string, Array<{ id: string; label: string; a
   p2: [{ id: "a3", label: "Primary", address: "6620 King George Blvd", city: "Surrey", postalCode: "V3W 4Z1", isDefault: true }],
   p3: [{ id: "a4", label: "Primary", address: "20150 Fraser Hwy", city: "Langley", postalCode: "V3A 4E6", isDefault: true }],
 };
-
-const calendarPeople = [
-  { recurringOrderId: "r1", patientName: "Avery Sandhu", deliveryAddress: "14250 88 Ave", deliveryCity: "Surrey", zoneName: "Surrey", assignedDriverName: "Derek Olsen", assignedDriverId: "d_derek", days: [1, 3, 5] },
-  { recurringOrderId: "r2", patientName: "Jordan Kaur", deliveryAddress: "6620 King George Blvd", deliveryCity: "Surrey", zoneName: "Surrey", assignedDriverName: "Anchor", assignedDriverId: "d_anchor", days: [2, 4] },
-  { recurringOrderId: "r3", patientName: "Riley Chen", deliveryAddress: "20150 Fraser Hwy", deliveryCity: "Langley", zoneName: "Langley", assignedDriverName: "Derek Olsen", assignedDriverId: "d_derek", days: [1, 4] },
-  { recurringOrderId: "r4", patientName: "Morgan Patel", deliveryAddress: "15433 16 Ave", deliveryCity: "White Rock", zoneName: "White Rock", assignedDriverName: "Priya Bains", assignedDriverId: "d_priya", days: [3], held: true },
-  // Skip This Week from the list (r5 is "Skipped this week" there too).
-  { recurringOrderId: "r5", patientName: "Casey Brar", deliveryAddress: "3000 Lougheed Hwy", deliveryCity: "Coquitlam", zoneName: "Coquitlam", assignedDriverName: null, assignedDriverId: null, days: [2, 5], weekSkipped: true },
-];
-
-// The calendar asks for whichever week it is showing, so instances are built
-// for the requested range — the guide is never empty, whatever the date.
-export function calendarInstances(start: string, end: string) {
-  const out = [];
-  const first = new Date(`${start}T00:00:00.000Z`);
-  const last = new Date(`${end}T00:00:00.000Z`);
-  for (let d = new Date(first); d < last; d.setUTCDate(d.getUTCDate() + 1)) {
-    const key = d.toISOString().slice(0, 10);
-    const sunday = new Date(d);
-    sunday.setUTCDate(d.getUTCDate() - d.getUTCDay());
-    const sundayKey = sunday.toISOString().slice(0, 10);
-    for (const p of calendarPeople) {
-      if (!p.days.includes(d.getUTCDay())) continue;
-      // The week skip only covers the current week.
-      const weekSkipped = !!p.weekSkipped && sundayKey === vancouverWeekStartKey();
-      out.push({
-        id: `${p.recurringOrderId}:${key}`,
-        recurringOrderId: p.recurringOrderId,
-        date: key,
-        patientName: p.patientName,
-        deliveryAddress: p.deliveryAddress,
-        deliveryCity: p.deliveryCity,
-        zoneName: p.zoneName,
-        assignedDriverName: p.assignedDriverName,
-        assignedDriverId: p.assignedDriverId,
-        isHeld: !!p.held || weekSkipped,
-        holdType: p.held ? ("TEMPLATE" as const) : weekSkipped ? ("WEEK" as const) : null,
-        skipDate: weekSkipped ? sundayKey : null,
-        holdReason: p.held ? "Away until Oct 19" : weekSkipped ? "Patient picked up in-store" : null,
-        generatedOrderStatus: null,
-      });
-    }
-  }
-  return out;
-}

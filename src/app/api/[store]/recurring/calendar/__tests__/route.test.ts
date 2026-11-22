@@ -42,11 +42,15 @@ function profile(id: string, extra: Record<string, unknown> = {}) {
 }
 
 // The week of Sun Oct 18 to Sat Oct 24, 2026.
-async function holds() {
-  const res = await GET(
+function calendar() {
+  return GET(
     new NextRequest("http://localhost/api/surrey/recurring/calendar?start=2026-10-18&end=2026-10-25"),
     { params: Promise.resolve({ store: "surrey" }) }
   );
+}
+
+async function holds() {
+  const res = await calendar();
   expect(res.status).toBe(200);
   const { instances } = await res.json();
   return Object.fromEntries(
@@ -62,6 +66,28 @@ describe("GET /api/[store]/recurring/calendar", () => {
     vi.clearAllMocks();
     mocks.resolveStore.mockResolvedValue(store);
     mocks.auth.mockResolvedValue({ user: { id: "admin_1", role: "PHARMACY_ADMIN", storeId: store.id } });
+  });
+
+  it("returns the recorded patient and all applicable reasons inside the requested store and week", async () => {
+    mocks.findMany.mockResolvedValue([profile("linked", {
+      patientId: "patient-1", activeDays: "[3]", isOnHold: true,
+      skips: [{ skipDate: date("2026-10-21"), scope: "DAY", reason: "Staff note" }],
+    })]);
+    const response = await calendar();
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { storeId: store.id, isActive: true } }));
+    expect((await response.json()).instances).toEqual([expect.objectContaining({
+      patientId: "patient-1", date: "2026-10-21", holdDetails: [
+        { type: "INSTANCE", reason: "Staff note" }, { type: "TEMPLATE", reason: null },
+      ],
+    })]);
+  });
+  it("checks pharmacy access before querying patient holds", async () => {
+    for (const user of [null, { role: "DRIVER", storeId: store.id }, { role: "PHARMACY_ADMIN", storeId: "other-store" }]) {
+      mocks.auth.mockResolvedValue(user && { user });
+      expect((await calendar()).status).toBe(401);
+    }
+    expect(mocks.findMany).not.toHaveBeenCalled();
   });
 
   it("tells one-day holds, week skips and vacation holds apart", async () => {

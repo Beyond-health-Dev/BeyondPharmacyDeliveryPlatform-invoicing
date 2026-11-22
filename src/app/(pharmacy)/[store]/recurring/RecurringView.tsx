@@ -1,4 +1,6 @@
-import type { ComponentProps } from "react";
+"use client";
+
+import { useReducer, type ComponentProps } from "react";
 import { Plus } from "lucide-react";
 import RecurringCalendar from "./RecurringCalendar";
 import RecurringLabelSheets from "./RecurringLabelSheets";
@@ -6,13 +8,13 @@ import RecurringOrderForm from "./RecurringOrderForm";
 import RecurringOrderList from "./RecurringOrderList";
 import PageHeader from "@/components/ui/PageHeader";
 import { cn, pageTitle, primaryButton } from "@/lib/portalStyles";
-import { vancouverTodayKey } from "@/lib/vancouverDate";
 
 // Presentational screen; the page supplies the data. Kept separate so the
 // dev-only style guide can render it from fixtures.
 export default function RecurringView({
   storeSlug,
   weekStartKey,
+  todayKey,
   zones,
   drivers,
   zoneHistory,
@@ -23,6 +25,7 @@ export default function RecurringView({
   storeSlug: string;
   // This week's Sunday in Vancouver (YYYY-MM-DD), worked out on the server.
   weekStartKey: string;
+  todayKey: string;
   zones: ComponentProps<typeof RecurringOrderList>["zones"];
   drivers: ComponentProps<typeof RecurringOrderList>["drivers"];
   zoneHistory: ComponentProps<typeof RecurringOrderList>["zoneHistory"];
@@ -31,8 +34,9 @@ export default function RecurringView({
   // Opens the label card's Rearrange panel on load (the style guide's screen).
   defaultRearrangeOpen?: boolean;
 }) {
+  const [calendarRevision, refreshCalendar] = useReducer((version: number) => version + 1, 0);
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-16">
       <PageHeader className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3">
         <h1 className={pageTitle}>Recurring deliveries</h1>
         <a
@@ -49,7 +53,9 @@ export default function RecurringView({
             storeSlug={storeSlug}
             drivers={drivers}
             initialWeekStartKey={weekStartKey}
-            todayKey={vancouverTodayKey()}
+            todayKey={todayKey}
+            revision={calendarRevision}
+            refreshCalendar={refreshCalendar}
           />
         </div>
         <div
@@ -58,6 +64,7 @@ export default function RecurringView({
           className="min-w-0 scroll-mt-20 xl:col-start-1 xl:row-span-2 xl:row-start-1"
         >
           <RecurringOrderForm
+            onScheduleChange={refreshCalendar}
             storeSlug={storeSlug}
             zones={zones}
             drivers={drivers}
@@ -75,6 +82,7 @@ export default function RecurringView({
           </div>
           <div data-reveal="">
             <RecurringOrderList
+              onScheduleChange={refreshCalendar}
               storeSlug={storeSlug}
               drivers={drivers}
               zones={zones}

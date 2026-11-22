@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireStoreAdmin } from "@/lib/storeAccess";
 import { prisma } from "@/lib/db";
 import { isRecurringScheduleDue } from "@/lib/cron";
-import {
-  findRecurringSkipForDate,
-  isVacationHoldActive,
-  recurringSkipScope,
-} from "@/lib/recurringHolds";
+import { holdsForCalendarDate } from "@/lib/weeklyHolds";
 import {
   recurringPeopleMatch,
   type RecurringPersonInput,
@@ -71,15 +67,9 @@ export async function GET(
   { params }: { params: Promise<{ store: string }> }
 ) {
   const { store: storeSlug } = await params;
-  const store = await resolveStore(storeSlug);
-  if (!store) {
-    return NextResponse.json({ error: "Store not found" }, { status: 404 });
-  }
-
-  const session = await auth();
-  if (!session?.user || session.user.role !== "PHARMACY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = await requireStoreAdmin(await resolveStore(storeSlug));
+  if (access.error) return access.error;
+  const { store } = access;
 
   const start = parseDateParam(req.nextUrl.searchParams.get("start"));
   const end = parseDateParam(req.nextUrl.searchParams.get("end"));
@@ -134,8 +124,8 @@ export async function GET(
       const weekStart = utcWeekStart(day);
       if (!isRecurringScheduleDue(recurring, { weekStart })) continue;
 
-      const skip = findRecurringSkipForDate(recurring.skips, { dayStart: day, weekStart });
-      const templateHold = isVacationHoldActive(recurring, day);
+      const holdDetails = holdsForCalendarDate(recurring.skips, recurring, day, weekStart);
+      const hold = holdDetails[0];
       const order = recurring.orders.find((candidate) =>
         sameUtcDay(candidate.scheduledDate, day)
       );
@@ -163,6 +153,7 @@ export async function GET(
         id: `${recurring.id}:${instanceDate}`,
         recurringOrderId: recurring.id,
         date: instanceDate,
+        patientId: recurring.patientId,
         patientName: recurring.patientName,
         deliveryAddress: recurring.deliveryAddress,
         deliveryCity: recurring.deliveryCity,
@@ -171,18 +162,11 @@ export async function GET(
         assignedDriverName: recurring.assignedDriver?.name ?? null,
         assignedDriverId: recurring.assignedDriverId,
         recurrenceIntervalWeeks: recurring.recurrenceIntervalWeeks,
-        isHeld: !!skip || templateHold,
-        // WEEK: Skip This Week from the profile list; INSTANCE: a one-day
-        // hold; TEMPLATE: the profile's vacation hold.
-        holdType: skip
-          ? recurringSkipScope(skip) === "WEEK"
-            ? "WEEK"
-            : "INSTANCE"
-          : templateHold
-            ? "TEMPLATE"
-            : null,
-        skipDate: skip ? dateKey(skip.skipDate) : null,
-        holdReason: skip?.reason ?? null,
+        isHeld: !!hold,
+        holdType: hold?.type ?? null,
+        skipDate: hold?.type === "WEEK" ? dateKey(weekStart) : hold?.type === "INSTANCE" ? instanceDate : null,
+        holdReason: hold?.reason ?? null,
+        holdDetails,
         generatedOrderId: order?.id ?? null,
         generatedOrderStatus: order?.status ?? null,
       });
@@ -193,5 +177,5 @@ export async function GET(
     start: dateKey(start),
     end: dateKey(end),
     instances,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

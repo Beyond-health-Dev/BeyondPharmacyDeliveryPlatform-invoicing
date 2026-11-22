@@ -42,12 +42,14 @@ export default function RecurringOrderForm({
   storeSlug,
   zoneHistory,
   fallbackZoneId,
+  onScheduleChange,
 }: {
   zones: Zone[];
   drivers: Driver[];
   storeSlug: string;
   zoneHistory: ZoneHistory;
   fallbackZoneId: string | null;
+  onScheduleChange: () => void;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -170,6 +172,7 @@ export default function RecurringOrderForm({
       setManualZoneId(null);
       setSelectedDriverId("");
       setPatientInputKey((key) => key + 1);
+      onScheduleChange();
       router.refresh();
     }
     setLoading(false);

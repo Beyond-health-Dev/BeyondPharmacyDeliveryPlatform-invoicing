@@ -15,6 +15,8 @@ import {
 } from "@/lib/portalStyles";
 import { BANNER_CLASSES } from "@/lib/statusTheme";
 import { vancouverWeekStartKey } from "@/lib/vancouverDate";
+import type { WeeklyHoldInstance } from "@/lib/weeklyHolds";
+import WeeklyHolds from "./WeeklyHolds";
 import styles from "@/styles/recurring-calendar.module.css";
 
 const ALL = "__all__";
@@ -39,28 +41,19 @@ interface Driver {
   name: string;
 }
 
-interface CalendarInstance {
+interface CalendarInstance extends WeeklyHoldInstance {
   id: string;
-  recurringOrderId: string;
-  date: string;
-  patientName: string;
-  deliveryAddress: string;
-  deliveryCity: string;
   zoneName: string;
   assignedDriverName: string | null;
   assignedDriverId: string | null;
-  isHeld: boolean;
-  // INSTANCE: a one-day hold; WEEK: Skip This Week from the profile list;
-  // TEMPLATE: the profile's vacation hold.
-  holdType: "INSTANCE" | "WEEK" | "TEMPLATE" | null;
   skipDate: string | null;
-  holdReason: string | null;
   generatedOrderStatus: string | null;
 }
 
 interface CalendarResponse {
   instances: CalendarInstance[];
 }
+const NO_INSTANCES: CalendarInstance[] = [];
 
 function addDays(date: Date, days: number) {
   const next = new Date(date);
@@ -105,6 +98,8 @@ export default function RecurringCalendar({
   drivers,
   initialWeekStartKey,
   todayKey,
+  revision,
+  refreshCalendar,
 }: {
   storeSlug: string;
   drivers: Driver[];
@@ -112,6 +107,8 @@ export default function RecurringCalendar({
   // week even if the browser's clock is off.
   initialWeekStartKey: string;
   todayKey: string;
+  revision: number;
+  refreshCalendar: () => void;
 }) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -120,14 +117,11 @@ export default function RecurringCalendar({
   const quickViewId = `${id}-quick-view`;
   const reasonId = `${id}-hold-reason`;
   const [visibleWeek, setVisibleWeek] = useState(() => dateFromKey(initialWeekStartKey));
-  const [instances, setInstances] = useState<CalendarInstance[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [result, setResult] = useState<{ key: string; instances: CalendarInstance[]; error: string } | null>(null);
   const [mutationError, setMutationError] = useState("");
   const [pendingAction, setPendingAction] = useState<"hold" | "delete" | null>(null);
   const [selectedInstance, setSelectedInstance] =
     useState<CalendarInstance | null>(null);
-  const [refreshToken, setRefreshToken] = useState(0);
   const [holdReasonDraft, setHoldReasonDraft] = useState("");
   const [activeDriverFilter, setActiveDriverFilter] = useState<string>(ALL);
 
@@ -140,6 +134,13 @@ export default function RecurringCalendar({
     () => Array.from({ length: 7 }, (_, index) => addDays(start, index)),
     [start]
   );
+  const startKey = dateKey(start);
+  const endKey = dateKey(end);
+  const weekLabel = WEEK_RANGE.formatRange(start, addDays(end, -1));
+  const requestKey = `${storeSlug}/${startKey}/${revision}`;
+  const loading = result?.key !== requestKey;
+  const instances = loading ? NO_INSTANCES : result.instances;
+  const error = loading ? "" : result.error;
 
   // Counts for the current week's instances, per driver tab.
   const driverCounts = useMemo(() => {
@@ -186,12 +187,13 @@ export default function RecurringCalendar({
     const controller = new AbortController();
 
     const params = new URLSearchParams({
-      start: dateKey(start),
-      end: dateKey(end),
+      start: startKey,
+      end: endKey,
     });
 
     fetch(`/api/${storeSlug}/recurring/calendar?${params.toString()}`, {
       signal: controller.signal,
+      cache: "no-store",
     })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as CalendarResponse & {
@@ -200,31 +202,24 @@ export default function RecurringCalendar({
         if (!res.ok) {
           throw new Error(body.error || "Failed to load recurring calendar");
         }
-        if (!controller.signal.aborted) setInstances(body.instances ?? []);
+        if (!Array.isArray(body.instances)) throw new Error("Failed to load recurring calendar");
+        if (controller.signal.aborted) return;
+        const rows = body.instances;
+        setResult({ key: requestKey, instances: rows, error: "" });
+        setSelectedInstance((selected) => selected ? rows.find((row) => row.id === selected.id) ?? null : null);
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : "Failed to load recurring calendar");
+          setResult({ key: requestKey, instances: NO_INSTANCES, error: err instanceof Error ? err.message : "Failed to load recurring calendar" });
         }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
       });
 
     return () => controller.abort();
-  }, [end, refreshToken, start, storeSlug]);
+  }, [endKey, requestKey, startKey, storeSlug]);
 
   const showWeek = (week: Date) => {
     if (week.getTime() === start.getTime()) return;
-    setLoading(true);
-    setError("");
     setVisibleWeek(week);
-  };
-
-  const refreshCalendar = () => {
-    setError("");
-    setLoading(true);
-    setRefreshToken((value) => value + 1);
   };
 
   const toggleInstanceHold = async (instance: CalendarInstance) => {
@@ -262,18 +257,8 @@ export default function RecurringCalendar({
         return;
       }
 
-      // A resumed week may restore one-day holds under the weekly skip.
-      setSelectedInstance(
-        instance.holdType === "WEEK"
-          ? null
-          : {
-              ...instance,
-              isHeld: holding,
-              holdType: holding ? "INSTANCE" : null,
-              skipDate: holding ? instance.date : null,
-              holdReason: holding ? reason : null,
-            }
-      );
+      // Re-read all effective holds. A resumed week can uncover a one-day hold.
+      if (instance.holdType === "WEEK") setSelectedInstance(null);
       setHoldReasonDraft("");
       refreshCalendar();
       router.refresh();
@@ -324,7 +309,7 @@ export default function RecurringCalendar({
         <div>
           <h2 id={headingId} className={sectionTitle}>Recurring calendar</h2>
           <p className={styles.weekRange} aria-live="polite">
-            {WEEK_RANGE.formatRange(start, addDays(end, -1))}
+            {weekLabel}
           </p>
         </div>
         <div className={styles.navigation} role="group" aria-label="Calendar week">
@@ -451,6 +436,7 @@ export default function RecurringCalendar({
           );
         })}
       </ol>
+      <WeeklyHolds instances={instances} weekLabel={weekLabel} loading={loading} error={error} refresh={refreshCalendar} />
 
       <Modal
         open={!!selectedInstance}
@@ -536,7 +522,7 @@ export default function RecurringCalendar({
                   type="button"
                   onClick={() => toggleInstanceHold(selectedInstance)}
                   disabled={
-                    busy ||
+                    busy || !ready ||
                     (!selectedInstance.isHeld && !holdReasonDraft.trim())
                   }
                   className={cn(button("secondary", "sm"), "justify-center")}

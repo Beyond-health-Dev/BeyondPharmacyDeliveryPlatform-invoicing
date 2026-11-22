@@ -257,6 +257,86 @@
   font-weight: 700;
 }
 
+.holdsDock {
+  --dock-inset: clamp(1rem, 2vw, 1.75rem);
+  position: fixed;
+  z-index: 20;
+  inset: auto var(--dock-inset) var(--dock-inset) auto;
+  color: var(--calendar-ink);
+}
+
+.holdsTab {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  min-height: 2.75rem;
+  padding: .4rem .8rem;
+  border: 1px solid var(--border-control-hover);
+  border-radius: .8rem;
+  background: var(--white);
+  box-shadow: 0 3px 12px rgb(24 41 73 / 12%);
+  font-size: .875rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.holdsTab[data-active] > svg:first-child { color: #9c404a; }
+.holdsTab:hover, .holdsClose:hover { background-color: var(--workspace-surface, var(--blue)); }
+.holdsChevron { color: var(--calendar-muted); }
+.holdsDock:has(:popover-open) .holdsChevron { transform: rotate(180deg); }
+.holdsBadge {
+  min-width: 1.4rem;
+  padding: .12rem .35rem;
+  border-radius: .4rem;
+  background: var(--placeholder-fill);
+  font-size: .75rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.holdsTab[data-active] .holdsBadge { background: var(--blush); color: #83323b; }
+
+.holdsPanel {
+  position: fixed;
+  inset: auto var(--dock-inset) calc(var(--dock-inset) + 3.2rem) auto;
+  margin: 0;
+  padding: 0;
+  width: min(23rem, calc(100vw - 2 * var(--dock-inset)));
+  max-height: min(31rem, calc(100dvh - 6.5rem));
+  overflow: hidden;
+  border: 1px solid var(--day-line);
+  border-radius: .9rem;
+  background: var(--white);
+  color: var(--calendar-ink);
+  box-shadow: 0 8px 24px rgb(24 41 73 / 14%);
+}
+.holdsPanel:popover-open { display: flex; flex-direction: column; }
+.holdsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: .9rem .9rem .8rem 1.1rem;
+  border-bottom: 1px solid var(--day-line);
+}
+.holdsHeader h3 { font-weight: 750; font-size: 1.06rem; }
+.holdsHeader p, .holdsAddress, .holdDetail p:first-child {
+  color: var(--calendar-muted);
+  font-size: .765625rem;
+}
+.holdsHeader p { margin-top: .16rem; }
+.holdsClose { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .4rem; cursor: pointer; }
+.holdsBody { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.holdPatients { padding-inline: 1.1rem; list-style: none; }
+.holdPatients > li { padding-block: .75rem; overflow-wrap: anywhere; }
+.holdPatients > li + li { border-top: 1px solid var(--day-line); }
+.holdPatients h4 { font-weight: 750; font-size: .9rem; }
+.holdDetail { margin-top: .27rem; }
+.holdDetail + .holdDetail { margin-top: .55rem; }
+.holdDetail p + p { margin-top: .1rem; white-space: pre-line; font-size: .865rem; line-height: 1.4; }
+.holdsMessage { padding: 1.05rem; color: var(--calendar-muted); font-size: .875rem; }
+.holdsMessage button { color: var(--calendar-ink); text-decoration: underline; cursor: pointer; }
+.holdsDock :focus-visible { outline: 2px solid var(--navy); outline-offset: -2px; }
+@media print { .holdsDock, .holdsPanel:popover-open { display: none; } }
+
 @media (prefers-reduced-motion: reduce) {
   .weekButton,
   .filter,

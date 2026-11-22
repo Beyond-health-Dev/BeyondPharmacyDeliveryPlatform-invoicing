@@ -87,12 +87,14 @@ export default function RecurringOrderList({
   storeSlug,
   zones,
   zoneHistory,
+  onScheduleChange,
 }: {
   orders: RecurringOrderItem[];
   drivers: Driver[];
   storeSlug: string;
   zones: ZoneOption[];
   zoneHistory: ZoneHistory;
+  onScheduleChange: () => void;
 }) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -193,6 +195,8 @@ export default function RecurringOrderList({
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setActionError(body.error || "Update failed. Please try again.");
+      } else {
+        onScheduleChange();
       }
     } catch {
       setActionError("Network error. Please try again.");
@@ -334,6 +338,7 @@ export default function RecurringOrderList({
 
       setEditingDaysId(null);
       setDraftActiveDays([]);
+      onScheduleChange();
       router.refresh();
     } catch {
       setDaysError("Network error. Please try again.");

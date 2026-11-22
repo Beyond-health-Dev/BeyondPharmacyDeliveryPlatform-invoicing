@@ -6,7 +6,7 @@ import StorePickerView from "@/components/StorePickerView";
 import DashboardView from "@/app/(pharmacy)/[store]/dashboard/DashboardView";
 import OrdersView, { ORDER_STATUS_FILTERS } from "@/app/(pharmacy)/[store]/orders/OrdersView";
 import NewOrderView from "@/app/(pharmacy)/[store]/orders/new/NewOrderView";
-import RecurringView from "@/app/(pharmacy)/[store]/recurring/RecurringView";
+import DevRecurringView from "../_DevRecurringView";
 import RemindersView from "@/app/(pharmacy)/[store]/reminders/RemindersView";
 import PricingView from "@/app/(pharmacy)/[store]/pricing/PricingView";
 import InvoicesView from "@/app/(pharmacy)/[store]/invoices/InvoicesView";
@@ -153,14 +153,14 @@ function renderScreen(path: string, search: string, status: string | undefined) 
     case "recurring/labels":
       return (
         <Pharmacy>
-          <RecurringView
+          <DevRecurringView
             storeSlug={slug}
             weekStartKey={vancouverWeekStartKey()}
+            todayKey={fx.TODAY}
             zones={fx.activeZones}
             drivers={fx.drivers}
             zoneHistory={fx.zoneHistory}
             fallbackZoneId="z_surrey"
-            orders={fx.recurringOrders}
             defaultRearrangeOpen={path === "recurring/labels"}
           />
         </Pharmacy>

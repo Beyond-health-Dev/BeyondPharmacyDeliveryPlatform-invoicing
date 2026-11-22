@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { auth } from "@/lib/auth";
+import { requireStoreAdmin } from "@/lib/storeAccess";
 import { getVancouverDeliveryDateInfo } from "@/lib/cron";
 import { isSelectedSpokeProvider } from "@/lib/spokeDispatch";
 import { resolveStore } from "@/lib/store";
@@ -27,15 +27,9 @@ export async function PATCH(
   { params }: { params: Promise<{ store: string; id: string }> }
 ) {
   const { store: storeSlug, id } = await params;
-  const store = await resolveStore(storeSlug);
-  if (!store) {
-    return NextResponse.json({ error: "Store not found" }, { status: 404 });
-  }
-
-  const session = await auth();
-  if (!session?.user || session.user.role !== "PHARMACY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = await requireStoreAdmin(await resolveStore(storeSlug));
+  if (access.error) return access.error;
+  const { store } = access;
 
   // Verify recurring order belongs to store
   const existing = await prisma.recurringOrder.findUnique({ where: { id, storeId: store.id } });
@@ -291,15 +285,9 @@ export async function DELETE(
   { params }: { params: Promise<{ store: string; id: string }> }
 ) {
   const { store: storeSlug, id } = await params;
-  const store = await resolveStore(storeSlug);
-  if (!store) {
-    return NextResponse.json({ error: "Store not found" }, { status: 404 });
-  }
-
-  const session = await auth();
-  if (!session?.user || session.user.role !== "PHARMACY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = await requireStoreAdmin(await resolveStore(storeSlug));
+  if (access.error) return access.error;
+  const { store } = access;
 
   const existing = await prisma.recurringOrder.findUnique({ where: { id, storeId: store.id } });
   if (!existing) {

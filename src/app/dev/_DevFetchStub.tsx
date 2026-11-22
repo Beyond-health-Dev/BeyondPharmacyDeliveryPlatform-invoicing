@@ -5,8 +5,8 @@
 // guide renders without a database or a signed-in session. Patched at module
 // load — before any component effect runs — and only in the browser.
 import { isHeldUntilDeliveryDay } from "@/lib/externalDispatchStatus";
+import { calendarInstances, updatePreviewHold } from "./_recurringPreview";
 import {
-  calendarInstances,
   drivers,
   dueReminders,
   notifications,
@@ -88,6 +88,7 @@ function answer(url: URL, method: string, body: unknown): Response {
   // /api/<store>/<...rest>
   const [, , ...rest] = url.pathname.split("/").filter(Boolean);
   const path = rest.join("/");
+  if (updatePreviewHold(path, method, body)) return json({ ok: true });
 
   if (method === "POST" && path === "orders") {
     const held = heldAnchorOrder(body);
